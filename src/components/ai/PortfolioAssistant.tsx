@@ -3,21 +3,27 @@ import {
   AlertTriangle,
   ArrowUpRight,
   Bot,
+  Check,
+  Copy,
   FileText,
   Loader2,
   Paperclip,
   Send,
   Sparkles,
+  Trash2,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   askAssistant,
+  clearAiHistory,
   formatFileSize,
+  getAiHistory,
   getAiStatus,
   type AiAttachment,
   type AiStatus,
 } from "@/lib/portalApi";
+import { Markdown } from "./Markdown";
 
 interface Bubble {
   id: string;
@@ -76,6 +82,7 @@ export function PortfolioAssistant({ onHire }: { onHire: () => void }) {
   const [progress, setProgress] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const closeTimer = useRef<number | null>(null);
@@ -85,6 +92,49 @@ export function PortfolioAssistant({ onHire }: { onHire: () => void }) {
       .then(setStatus)
       .catch(() => setStatus(null));
   }, []);
+
+  // Restore the stored thread so history survives reloads and other devices.
+  useEffect(() => {
+    let cancelled = false;
+    getAiHistory(threadId)
+      .then((result) => {
+        if (cancelled || !result.messages?.length) return;
+        const restored = result.messages.map((entry) => ({
+          id: entry.id,
+          role: entry.role,
+          text: entry.content,
+          attachments: entry.attachments ?? [],
+          createdAt: entry.createdAt,
+        }));
+        // Never clobber a message the visitor already sent in this session.
+        setMessages((current) => (current.length ? current : restored));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+    // Only the initial thread is restored; new messages are appended live.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const copyMessage = async (message: Bubble) => {
+    try {
+      await navigator.clipboard.writeText(message.text);
+      setCopiedId(message.id);
+      window.setTimeout(() => setCopiedId((current) => (current === message.id ? null : current)), 1600);
+    } catch {
+      setError("Clipboard access was blocked by the browser.");
+    }
+  };
+
+  const clearConversation = async () => {
+    const previous = threadId;
+    setMessages([]);
+    setError(null);
+    setFiles([]);
+    setThreadId(crypto.randomUUID());
+    await clearAiHistory(previous).catch(() => undefined);
+  };
 
   useEffect(() => {
     try {
@@ -285,6 +335,15 @@ export function PortfolioAssistant({ onHire }: { onHire: () => void }) {
                 </button>
                 <button
                   type="button"
+                  onClick={() => void clearConversation()}
+                  aria-label="Clear this conversation"
+                  title="Clear conversation"
+                  className="grid h-[26px] w-[26px] place-items-center rounded-full border border-white/15 text-white/55 transition-colors hover:border-red-400/40 hover:text-red-200"
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+                <button
+                  type="button"
                   onClick={closePanel}
                   aria-label="Close assistant"
                   className="grid h-8 w-8 place-items-center rounded-full border border-white/12 text-white/60 transition-all hover:border-white/30 hover:bg-white/5 hover:text-white"
@@ -336,7 +395,11 @@ export function PortfolioAssistant({ onHire }: { onHire: () => void }) {
                         : "rounded-bl-md border border-white/14 bg-white/[0.09] text-white"
                     )}
                   >
-                    <p className="whitespace-pre-wrap break-words">{message.text}</p>
+                    {message.role === "assistant" ? (
+                      <Markdown text={message.text} />
+                    ) : (
+                      <p className="whitespace-pre-wrap break-words">{message.text}</p>
+                    )}
                     {message.attachments && message.attachments.length > 0 && (
                       <ul className="mt-2 space-y-1">
                         {message.attachments.map((file) => (
@@ -356,14 +419,31 @@ export function PortfolioAssistant({ onHire }: { onHire: () => void }) {
                         ))}
                       </ul>
                     )}
-                    <p
-                      className={cn(
-                        "mt-1.5 text-[8px] uppercase tracking-[0.16em]",
-                        message.role === "user" ? "text-neutral-500" : "text-white/50"
+                    <div className="mt-1.5 flex items-center justify-between gap-3">
+                      <p
+                        className={cn(
+                          "text-[8px] uppercase tracking-[0.16em]",
+                          message.role === "user" ? "text-neutral-500" : "text-white/50"
+                        )}
+                      >
+                        {message.role === "user" ? "You" : "Assistant"} · {clock(message.createdAt)}
+                      </p>
+                      {message.role === "assistant" && (
+                        <button
+                          type="button"
+                          onClick={() => void copyMessage(message)}
+                          aria-label="Copy response"
+                          className="inline-flex items-center gap-1 text-[8px] uppercase tracking-[0.14em] text-white/45 transition-colors hover:text-white"
+                        >
+                          {copiedId === message.id ? (
+                            <Check className="h-2.5 w-2.5" />
+                          ) : (
+                            <Copy className="h-2.5 w-2.5" />
+                          )}
+                          {copiedId === message.id ? "Copied" : "Copy"}
+                        </button>
                       )}
-                    >
-                      {message.role === "user" ? "You" : "Assistant"} · {clock(message.createdAt)}
-                    </p>
+                    </div>
                   </div>
                 </div>
               ))}

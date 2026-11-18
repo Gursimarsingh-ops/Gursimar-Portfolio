@@ -179,6 +179,7 @@ export interface AiStatus {
   configured: boolean;
   provider: string;
   model: string;
+  vision?: boolean;
   limits: { messageChars: number; files: number; imageBytes: number; totalBytes: number };
 }
 
@@ -203,6 +204,23 @@ export function askAssistant(
   form.append("message", message);
   files.forEach((file) => form.append("files", file));
   return upload<{ threadId: string; reply: string; attachments: AiAttachment[] }>("/api/ai/chat", form, onProgress);
+}
+
+export interface AiHistoryMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  attachments: AiAttachment[];
+  createdAt: string;
+}
+
+/** Server-side thread history, so reconnecting restores the conversation. */
+export function getAiHistory(threadId: string): Promise<{ threadId: string; messages: AiHistoryMessage[] }> {
+  return request(`/api/ai/thread/${encodeURIComponent(threadId)}`);
+}
+
+export function clearAiHistory(threadId: string): Promise<{ ok: boolean; threadId: string }> {
+  return request(`/api/ai/thread/${encodeURIComponent(threadId)}`, { method: "DELETE" });
 }
 
 export function formatFileSize(bytes: number): string {

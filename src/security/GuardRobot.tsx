@@ -25,22 +25,22 @@ export function GuardRobot({ className }: { className?: string }) {
       <defs>
         {/* Brushed steel, lit from the upper left. */}
         <linearGradient id="gx-steel" x1="0.08" y1="0" x2="0.86" y2="1">
-          <stop offset="0%" stopColor="#f2f6fa" />
-          <stop offset="14%" stopColor="#c9d3de" />
-          <stop offset="42%" stopColor="#96a1af" />
-          <stop offset="70%" stopColor="#5d6875" />
-          <stop offset="100%" stopColor="#2b333d" />
+          <stop offset="0%" stopColor="#dfe8f1" />
+          <stop offset="16%" stopColor="#b0bcc9" />
+          <stop offset="44%" stopColor="#7c8896" />
+          <stop offset="72%" stopColor="#48525f" />
+          <stop offset="100%" stopColor="#1d242c" />
         </linearGradient>
         <linearGradient id="gx-steel-mid" x1="0.16" y1="0" x2="0.9" y2="1">
-          <stop offset="0%" stopColor="#c3ccd7" />
-          <stop offset="38%" stopColor="#8590a0" />
-          <stop offset="76%" stopColor="#4c5765" />
-          <stop offset="100%" stopColor="#232a33" />
+          <stop offset="0%" stopColor="#a9b5c2" />
+          <stop offset="38%" stopColor="#737f8d" />
+          <stop offset="76%" stopColor="#434d5a" />
+          <stop offset="100%" stopColor="#191f27" />
         </linearGradient>
         <linearGradient id="gx-gun" x1="0.2" y1="0" x2="0.84" y2="1">
-          <stop offset="0%" stopColor="#4a5563" />
-          <stop offset="46%" stopColor="#2c343f" />
-          <stop offset="100%" stopColor="#10151b" />
+          <stop offset="0%" stopColor="#3b4655" />
+          <stop offset="46%" stopColor="#202934" />
+          <stop offset="100%" stopColor="#0b0f15" />
         </linearGradient>
         <linearGradient id="gx-gun-dark" x1="0" y1="0" x2="1" y2="1">
           <stop offset="0%" stopColor="#333c47" />
@@ -213,7 +213,7 @@ export function GuardRobot({ className }: { className?: string }) {
             fill="url(#gx-steel)"
           />
           <g clipPath="url(#gx-chest-clip)">
-            <rect x="78" y="84" width="84" height="88" fill="url(#gx-sheen)" opacity="0.55" />
+            <rect x="78" y="84" width="84" height="88" fill="url(#gx-sheen)" opacity="0.3" />
             <path d="M78 132 L162 112 L162 124 L78 144 Z" fill="#ffffff" opacity="0.07" />
             <path d="M96 84 C104 108 104 144 100 168" stroke="#0f151c" strokeWidth="1" opacity="0.55" fill="none" />
             <path d="M144 84 C136 108 136 144 140 168" stroke="#0f151c" strokeWidth="1" opacity="0.42" fill="none" />
@@ -332,6 +332,7 @@ export function GuardRobot({ className }: { className?: string }) {
         </g>
 
         {/* =============================== LEFT ARM =============================== */}
+        <g transform="translate(-6 0)">
         <g style={{ animation: "guard-arm-left 8.8s ease-in-out infinite", transformOrigin: "78px 106px" }}>
           {/* shoulder ball */}
           <circle cx="74" cy="110" r="10.5" fill="url(#gx-gun-dark)" stroke="#0c1117" strokeWidth="0.8" />
@@ -370,8 +371,10 @@ export function GuardRobot({ className }: { className?: string }) {
             <path d="M47 234 C45 238 45 243 47 246" stroke="url(#gx-steel)" strokeWidth="2.6" strokeLinecap="round" />
           </g>
         </g>
+        </g>
 
         {/* ========================= RIGHT ARM + BATON ========================= */}
+        <g transform="translate(6 0)">
         <g style={{ animation: "guard-arm-right 8.8s ease-in-out infinite", transformOrigin: "162px 106px" }}>
           <circle cx="166" cy="110" r="10.5" fill="url(#gx-gun-dark)" stroke="#0c1117" strokeWidth="0.8" />
           <circle cx="166" cy="110" r="5.4" fill="url(#gx-steel-mid)" />
@@ -419,9 +422,11 @@ export function GuardRobot({ className }: { className?: string }) {
             <circle cx="184.5" cy="270" r="3" fill="url(#gx-steel-mid)" />
           </g>
         </g>
+        </g>
 
         {/* ================================ HEAD ================================ */}
         <g style={{ animation: "guard-scan-pause 13.5s ease-in-out infinite", transformOrigin: "120px 82px" }}>
+          <g transform="translate(120 47) scale(1.1) translate(-120 -47)">
           {/* neck column */}
           <rect x="106" y="68" width="28" height="20" rx="6" fill="url(#gx-gun-dark)" stroke="#0a0e13" strokeWidth="0.8" />
           <path d="M110 73 L130 73" stroke="#77838f" strokeWidth="0.8" opacity="0.5" />
@@ -431,14 +436,22 @@ export function GuardRobot({ className }: { className?: string }) {
           {/* helmet shell */}
           <path
             d="M88 46 C88 26 100 14 120 14 C140 14 152 26 152 46 L151 62 C151 72 140 78 120 78 C100 78 89 72 89 62 Z"
-            fill="url(#gx-steel)"
-            stroke="#121922"
+            fill="url(#gx-gun)"
+            stroke="#0d131a"
             strokeWidth="1.1"
           />
           <path
             d="M88 46 C88 26 100 14 120 14 C140 14 152 26 152 46 L151 62 C151 72 140 78 120 78 C100 78 89 72 89 62 Z"
             fill="url(#gx-sheen)"
-            opacity="0.55"
+            opacity="0.26"
+          />
+          {/* polished steel helmet rim */}
+          <path
+            d="M88 46 C88 26 100 14 120 14 C140 14 152 26 152 46"
+            stroke="url(#gx-steel)"
+            strokeWidth="2.2"
+            fill="none"
+            opacity="0.9"
           />
           {/* crown seam and crest */}
           <path d="M120 14 L120 34" stroke="#1a222b" strokeWidth="1.2" opacity="0.6" />
@@ -502,6 +515,7 @@ export function GuardRobot({ className }: { className?: string }) {
             <path d="M0 -5.2 L6.4 -2.6 L6.4 2.6 L0 6 L-6.4 2.6 L-6.4 -2.6 Z" fill="url(#gx-gold)" stroke="#6d5822" strokeWidth="0.7" />
             <circle cx="0" cy="0.2" r="1.7" fill="#fff8dd" opacity="0.92" />
             <path d="M0 -3.2 L0 3.8" stroke="#8a7130" strokeWidth="0.5" />
+          </g>
           </g>
         </g>
 

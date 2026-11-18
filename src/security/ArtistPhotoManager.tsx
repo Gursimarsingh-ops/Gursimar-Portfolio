@@ -3,19 +3,20 @@ import {
   AlertTriangle,
   Camera,
   CheckCircle2,
+  Crop,
   Image as ImageIcon,
   Loader2,
   RefreshCw,
-  Save,
   Trash2,
   Upload,
-  X,
+  Wand2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { api, ApiError, formatBytes, uploadFile, type ArtistPhoto } from "@/admin/api";
+import { api, ApiError, formatBytes, uploadFile, type ArtistOriginal, type ArtistPhoto } from "@/admin/api";
 import { invalidateArtistPhoto } from "@/lib/portfolio";
+import { MediaEditor, type EditedImage } from "./MediaEditor";
 
-const ACCEPTED = ["image/jpeg", "image/png", "image/webp", "image/gif", "image/avif"];
+const ACCEPTED = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 const MAX_BYTES = 8 * 1024 * 1024;
 
 function formatWhen(iso: string | null | undefined): string {
@@ -58,17 +59,15 @@ function Notice({ tone, children }: { tone: Tone; children: React.ReactNode }) {
 /**
  * Artist Profile Management.
  *
- * The photo lives in R2 and the pointer to it in D1 (`settings.artist_photo`),
- * so it survives refreshes and redeploys. Saving swaps the active photo and
- * removes the previous file; the public Artist frame reads it from
- * `/api/artist`.
+ * The edited photo lives in R2 (`artist/`), the untouched upload is kept in R2
+ * (`originals/`) so it can be re-edited, and both pointers live in D1 settings.
  */
 export function ArtistPhotoManager() {
   const [photo, setPhoto] = useState<ArtistPhoto | null>(null);
+  const [original, setOriginal] = useState<ArtistOriginal | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [pending, setPending] = useState<File | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [editor, setEditor] = useState<{ file?: File; url?: string; name: string; fromOriginal: boolean } | null>(null);
   const [progress, setProgress] = useState(0);
   const [busy, setBusy] = useState<"idle" | "uploading" | "saving" | "deleting">("idle");
   const [message, setMessage] = useState<{ tone: Tone; text: string } | null>(null);
@@ -80,6 +79,7 @@ export function ArtistPhotoManager() {
     try {
       const result = await api.artistPhoto();
       setPhoto(result.photo);
+      setOriginal(result.original ?? null);
       setWarning(result.warning ?? null);
     } catch (err) {
       setMessage({
@@ -95,22 +95,12 @@ export function ArtistPhotoManager() {
     void load();
   }, [load]);
 
-  useEffect(() => {
-    if (!pending) {
-      setPreviewUrl(null);
-      return;
-    }
-    const url = URL.createObjectURL(pending);
-    setPreviewUrl(url);
-    return () => URL.revokeObjectURL(url);
-  }, [pending]);
-
   const pick = (file: File | undefined) => {
     if (!file) return;
     setMessage(null);
     const type = (file.type || "").toLowerCase();
     if (!ACCEPTED.includes(type)) {
-      setMessage({ tone: "error", text: "Unsupported image. Use JPG, PNG, WEBP, AVIF or GIF." });
+      setMessage({ tone: "error", text: "Unsupported image. Use JPG, PNG, WEBP or GIF." });
       return;
     }
     if (file.size > MAX_BYTES) {
@@ -121,33 +111,47 @@ export function ArtistPhotoManager() {
       setMessage({ tone: "error", text: "That file looks empty or corrupt. Choose another image." });
       return;
     }
-    setPending(file);
+    setEditor({ file, name: file.name, fromOriginal: false });
   };
 
-  const save = async () => {
-    if (!pending) {
-      setMessage({ tone: "info", text: "Choose an image first, then save." });
-      return;
-    }
+  const apply = async (edited: EditedImage) => {
+    if (!editor) return;
     setBusy("uploading");
     setProgress(0);
     setMessage(null);
     let uploadedKey: string | null = null;
+    let originalKey: string | null = null;
+
     try {
-      const uploaded = await uploadFile(pending, "artist", setProgress);
+      if (editor.file) {
+        // Keep the untouched upload so the photograph can be re-edited later.
+        const storedOriginal = await uploadFile(editor.file, "original", (percent) =>
+          setProgress(Math.round(percent * 0.3))
+        );
+        originalKey = storedOriginal.key;
+      }
+
+      const uploaded = await uploadFile(edited.file, "artist", (percent) =>
+        setProgress(editor.file ? 30 + Math.round(percent * 0.7) : percent)
+      );
       uploadedKey = uploaded.key;
+
       setBusy("saving");
-      const result = await api.setArtistPhoto(uploaded.key);
+      const result = await api.setArtistPhoto(uploaded.key, originalKey ?? undefined);
       setPhoto(result.photo);
-      setPending(null);
+      setOriginal(result.original ?? original);
+      setEditor(null);
       invalidateArtistPhoto();
       setMessage({
         tone: "success",
-        text: "Artist photo saved. It is now hanging in the frame between the two robots on the public Artist section.",
+        text: editor.file
+          ? `Photo saved at ${edited.width}×${edited.height}. The original is kept so you can edit it again.`
+          : "Photo re-edited and saved. The original upload is unchanged.",
       });
       setWarning(null);
     } catch (err) {
       if (uploadedKey) await api.deleteUpload(uploadedKey).catch(() => undefined);
+      if (originalKey) await api.deleteUpload(originalKey).catch(() => undefined);
       setMessage({
         tone: "error",
         text: err instanceof ApiError ? err.message : "The photo could not be saved. Try again.",
@@ -164,7 +168,7 @@ export function ArtistPhotoManager() {
     try {
       await api.clearArtistPhoto();
       setPhoto(null);
-      setPending(null);
+      setOriginal(null);
       invalidateArtistPhoto();
       setConfirmDelete(false);
       setMessage({ tone: "success", text: "Artist photo deleted. The frame is back to its empty plaque." });
@@ -178,8 +182,8 @@ export function ArtistPhotoManager() {
     }
   };
 
-  const currentSrc = previewUrl ?? photo?.url ?? null;
   const working = busy !== "idle";
+  const currentSrc = photo?.url ?? null;
 
   return (
     <section
@@ -228,7 +232,6 @@ export function ArtistPhotoManager() {
       </header>
 
       <div className="grid gap-5 p-5 md:grid-cols-[minmax(0,240px)_minmax(0,1fr)]">
-        {/* ------------------------------ preview ------------------------------ */}
         <div>
           <div className="relative overflow-hidden rounded-xl border border-white/12 bg-black/60">
             <div className="relative aspect-[4/5] w-full">
@@ -242,37 +245,32 @@ export function ArtistPhotoManager() {
                   </div>
                 </div>
               )}
-              {previewUrl && (
-                <span className="absolute left-2 top-2 rounded-full border border-cyan-300/40 bg-cyan-400/15 px-2 py-0.5 text-[8px] uppercase tracking-[0.16em] text-cyan-100 backdrop-blur">
-                  Unsaved preview
-                </span>
-              )}
               <span className="pointer-events-none absolute inset-0 shadow-[inset_0_0_40px_rgba(0,0,0,0.55)]" />
               <span className="pointer-events-none absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-white/40 to-transparent" />
+              {original && (
+                <span className="absolute left-2 top-2 rounded-full border border-white/20 bg-black/60 px-2 py-0.5 text-[8px] uppercase tracking-[0.14em] text-white/70 backdrop-blur">
+                  Original kept
+                </span>
+              )}
             </div>
             <div className="flex items-center justify-between gap-2 border-t border-white/[0.07] px-3 py-2">
               <span className="text-[9px] uppercase tracking-[0.16em] text-white/35">
-                {previewUrl ? "New selection" : photo ? "Active on site" : "Awaiting upload"}
+                {photo ? "Active on site" : "Awaiting upload"}
               </span>
-              <span className="text-[9px] text-white/35">
-                {pending ? formatBytes(pending.size) : photo ? formatBytes(photo.size) : "—"}
-              </span>
+              <span className="text-[9px] text-white/35">{photo ? formatBytes(photo.size) : "—"}</span>
             </div>
           </div>
 
           <p className="mt-2 text-[9px] uppercase leading-relaxed tracking-[0.14em] text-white/25">
-            JPG · PNG · WEBP · AVIF · GIF — up to {formatBytes(MAX_BYTES)}
+            JPG · PNG · WEBP · GIF — up to {formatBytes(MAX_BYTES)}
           </p>
         </div>
 
-        {/* ------------------------------- controls ------------------------------- */}
         <div className="flex flex-col">
           <div className="grid gap-2 sm:grid-cols-2">
             <div className="rounded-xl border border-white/[0.08] bg-black/25 px-3 py-2.5">
               <p className="text-[8px] uppercase tracking-[0.2em] text-white/30">Stored format</p>
-              <p className="mt-1 text-[11px] text-white/70">
-                {pending ? pending.type || "image" : photo?.type || "—"}
-              </p>
+              <p className="mt-1 text-[11px] text-white/70">{photo?.type || "—"}</p>
             </div>
             <div className="rounded-xl border border-white/[0.08] bg-black/25 px-3 py-2.5">
               <p className="text-[8px] uppercase tracking-[0.2em] text-white/30">Last updated</p>
@@ -296,39 +294,27 @@ export function ArtistPhotoManager() {
               type="button"
               onClick={() => inputRef.current?.click()}
               disabled={working}
-              className="inline-flex items-center justify-center gap-1.5 rounded-full border border-white/15 bg-white/[0.05] px-3.5 py-2.5 text-[10px] uppercase tracking-[0.14em] text-white/75 transition-colors hover:border-white/35 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex items-center justify-center gap-1.5 rounded-full bg-white px-4 py-2.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-neutral-950 transition-all hover:-translate-y-0.5 hover:bg-neutral-200 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Upload className="h-3 w-3" />
-              {photo ? "Replace photo" : "Upload new photo"}
+              {photo ? "Replace photo" : "Upload photo"}
             </button>
 
-            <button
-              type="button"
-              onClick={() => void save()}
-              disabled={working || !pending}
-              className="inline-flex items-center justify-center gap-1.5 rounded-full bg-white px-4 py-2.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-neutral-950 transition-all hover:-translate-y-0.5 hover:bg-neutral-200 disabled:cursor-not-allowed disabled:opacity-45"
-            >
-              {busy === "uploading" || busy === "saving" ? (
-                <Loader2 className="h-3 w-3 animate-spin" />
-              ) : (
-                <Save className="h-3 w-3" />
-              )}
-              {busy === "uploading"
-                ? `Uploading ${progress}%`
-                : busy === "saving"
-                  ? "Saving…"
-                  : "Save changes"}
-            </button>
-
-            {pending && (
+            {original && (
               <button
                 type="button"
-                onClick={() => setPending(null)}
+                onClick={() =>
+                  setEditor({
+                    url: original.url,
+                    name: "artist-original",
+                    fromOriginal: true,
+                  })
+                }
                 disabled={working}
-                className="inline-flex items-center justify-center gap-1.5 rounded-full border border-white/12 px-3 py-2.5 text-[10px] uppercase tracking-[0.14em] text-white/50 transition-colors hover:border-white/30 hover:text-white disabled:opacity-40"
+                className="inline-flex items-center justify-center gap-1.5 rounded-full border border-white/15 bg-white/[0.05] px-3.5 py-2.5 text-[10px] uppercase tracking-[0.14em] text-white/75 transition-colors hover:border-white/35 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
               >
-                <X className="h-3 w-3" />
-                Discard
+                <Wand2 className="h-3 w-3" />
+                Re-edit original
               </button>
             )}
 
@@ -340,7 +326,7 @@ export function ArtistPhotoManager() {
                 className="ml-auto inline-flex items-center justify-center gap-1.5 rounded-full border border-red-400/25 px-3.5 py-2.5 text-[10px] uppercase tracking-[0.14em] text-red-200/80 transition-colors hover:border-red-400/50 hover:bg-red-500/10 hover:text-red-100 disabled:opacity-40"
               >
                 <Trash2 className="h-3 w-3" />
-                Delete photo
+                Delete
               </button>
             )}
           </div>
@@ -351,21 +337,50 @@ export function ArtistPhotoManager() {
                 className="block h-full rounded-full bg-gradient-to-r from-cyan-200/70 to-white transition-all duration-300"
                 style={{ width: `${progress}%` }}
               />
+              <span className="sr-only">{progress}% uploaded</span>
             </span>
           )}
 
           <div className="mt-3 space-y-2">
             {warning && <Notice tone="info">{warning}</Notice>}
             {message && <Notice tone={message.tone}>{message.text}</Notice>}
-            {!message && !warning && !pending && (
+            {!message && !warning && (
               <Notice tone="info">
-                Uploading here writes the image to R2 and points the Artist frame at it. No browser-only
-                storage is used, so the photo survives refreshes and redeploys.
+                Uploading opens the editor first: crop, zoom, rotate, aspect ratio and colour grading are applied
+                before the file is written to R2. Saving points the Artist frame at the new image, and changes
+                appear on the deployed site immediately.
               </Notice>
             )}
           </div>
+
+          <div className="mt-4 flex items-start gap-2 rounded-xl border border-white/[0.08] bg-black/20 px-3 py-2.5 text-[10px] leading-relaxed text-white/35">
+            <Crop className="mt-0.5 h-3 w-3 shrink-0 text-white/40" />
+            The frame displays the stored composition exactly as edited. Choose profile, portrait or square
+            ratios in the editor to control how the robots frame your photograph.
+          </div>
         </div>
       </div>
+
+      {editor && (
+        <MediaEditor
+          open={Boolean(editor)}
+          file={editor.file}
+          url={editor.url}
+          name={editor.name}
+          title={editor.fromOriginal ? "Re-edit artist photograph" : "Edit artist photograph"}
+          subtitle={
+            editor.fromOriginal
+              ? "Editing the kept original — the edit is saved as the new active photo"
+              : "The edited image is uploaded; the untouched original is kept for later edits"
+          }
+          defaultAspect="4:5"
+          applying={busy === "uploading" || busy === "saving"}
+          onCancel={() => {
+            if (busy === "idle") setEditor(null);
+          }}
+          onApply={(result) => void apply(result)}
+        />
+      )}
 
       {confirmDelete && (
         <div
@@ -386,8 +401,8 @@ export function ArtistPhotoManager() {
               <div>
                 <p className="text-[13px] font-medium text-white">Delete the artist photo?</p>
                 <p className="mt-1 text-[11px] leading-relaxed text-white/45">
-                  The stored image is deleted from R2 and the frame returns to its empty plaque. You can upload
-                  a new photo at any time.
+                  The edited photo and its kept original are deleted from R2 and the frame returns to its empty
+                  plaque. You can upload a new photo at any time.
                 </p>
               </div>
             </div>

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { X } from "lucide-react";
 
 interface Props {
@@ -8,6 +9,8 @@ interface Props {
   videoUrl?: string | null;
   posterUrl?: string | null;
   description?: string;
+  /** Optional stored aspect ratio, e.g. "9/16" from the dashboard. */
+  ratio?: string | null;
 }
 
 export function VideoPlayerDialog({
@@ -18,15 +21,21 @@ export function VideoPlayerDialog({
   videoUrl,
   posterUrl,
   description,
+  ratio,
 }: Props) {
+  const [detected, setDetected] = useState<number | null>(null);
   if (!open) return null;
+
+  const pinned = ratio && ratio !== "auto" ? ratio.replace("/", " / ") : null;
+  const aspect = pinned ?? (detected ? `${detected}` : "16 / 9");
+
   return (
     <div
       className="fixed inset-0 z-[60] grid place-items-center bg-neutral-950/80 p-4 backdrop-blur-sm"
       onClick={() => onOpenChange(false)}
     >
       <div
-        className="relative max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-2xl border border-neutral-800 bg-neutral-950 shadow-2xl"
+        className="relative max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-2xl border border-neutral-800 bg-neutral-950 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-neutral-800 bg-neutral-950/95 px-5 py-3 backdrop-blur">
@@ -44,14 +53,23 @@ export function VideoPlayerDialog({
         </div>
 
         {videoUrl ? (
-          <video
-            src={videoUrl}
-            poster={posterUrl ?? undefined}
-            controls
-            playsInline
-            preload="metadata"
-            className="aspect-video w-full bg-black"
-          />
+          <div className="grid place-items-center bg-black">
+            <video
+              src={videoUrl}
+              poster={posterUrl ?? undefined}
+              controls
+              playsInline
+              preload="metadata"
+              onLoadedMetadata={(event) => {
+                const element = event.currentTarget;
+                if (element.videoWidth && element.videoHeight) {
+                  setDetected(element.videoWidth / element.videoHeight);
+                }
+              }}
+              style={{ aspectRatio: aspect }}
+              className="max-h-[76vh] w-full bg-black object-contain"
+            />
+          </div>
         ) : (
           <div className="relative aspect-video bg-black">
             <div className="absolute inset-0 grid place-items-center text-neutral-600">

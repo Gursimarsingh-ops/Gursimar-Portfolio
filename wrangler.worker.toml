@@ -1,0 +1,35 @@
+# ---------------------------------------------------------------------------
+# Standalone Worker target — used for local development against the SAME
+# production D1 + R2, and available as an alternative deploy if the site is
+# ever moved from Pages to a Worker. It is NOT used by the Pages build.
+#
+#   shared (default)  npm run dev:api       -> production D1 + R2
+#   offline only      npm run dev:api:local -> emulated .wrangler/state
+#
+# Shared mode needs `npx wrangler login` once. Offline mode never touches
+# production data.
+# ---------------------------------------------------------------------------
+
+name = "gursimar-portfolio-api"
+main = "worker/index.ts"
+compatibility_date = "2024-11-01"
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+run_worker_first = true
+not_found_handling = "single-page-application"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "portfolio-db"
+database_id = "00000000-0000-4000-8000-000000000000"
+remote = true
+
+[[r2_buckets]]
+binding = "FILES"
+bucket_name = "portfolio-media"
+remote = true
+
+[vars]
+APP_NAME = "Gursimar Singh Portfolio"

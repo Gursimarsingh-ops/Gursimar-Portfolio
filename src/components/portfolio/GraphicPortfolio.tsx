@@ -88,7 +88,7 @@ export function GraphicPortfolio() {
           {inCategory.map((project) => (
             <ScreenFrame
               key={project.id}
-              ratio={current.ratio}
+              ratio={project.ratio ?? "auto"}
               label={project.title}
               imageUrl={project.mediaUrl}
               onClick={() =>

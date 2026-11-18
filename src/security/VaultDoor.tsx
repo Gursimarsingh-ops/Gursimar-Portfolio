@@ -24,15 +24,15 @@ export function VaultDoor({ state, onTurnWheel, children, className }: VaultDoor
   const unlocked = state !== "sealed";
 
   return (
-    <div className={cn("relative [perspective:1800px]", className)}>
-      <div className="relative overflow-hidden rounded-[26px] border border-white/10 bg-[#07090c] shadow-[0_50px_120px_-60px_rgba(0,0,0,0.95)]">
+    <div className={cn("relative h-full [perspective:1800px]", className)}>
+      <div className="relative flex h-full flex-col overflow-hidden rounded-[26px] border border-white/10 bg-[#07090c] shadow-[0_50px_120px_-60px_rgba(0,0,0,0.95)]">
         {/* safe interior */}
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(120%_120%_at_50%_0%,#1a1f27_0%,#0c0f14_55%,#05060a_100%)]" />
         <div className="pointer-events-none absolute inset-3 rounded-[20px] border border-white/[0.06] [background-image:linear-gradient(to_right,rgba(255,255,255,0.045)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.045)_1px,transparent_1px)] [background-size:34px_34px]" />
         <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/25 to-transparent" />
 
         {/* content revealed by the door */}
-        <div className="relative min-h-[430px] px-4 py-6 sm:px-7 sm:py-8">{children}</div>
+        <div className="relative flex min-h-[430px] flex-1 flex-col justify-center px-4 py-6 sm:px-7 sm:py-8">{children}</div>
 
         {/* swinging door */}
         <div

@@ -89,7 +89,7 @@ export function VideoPortfolio() {
           {inCategory.map((project) => (
             <ScreenFrame
               key={project.id}
-              ratio="16/9"
+              ratio={project.ratio ?? "auto"}
               variant="video"
               label={project.title}
               posterUrl={project.thumbUrl}

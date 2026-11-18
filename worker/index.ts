@@ -11,12 +11,13 @@ import {
   sha256Hex,
   verifyPassword,
 } from "./auth";
-import { handlePortalApi } from "./portal";
+import { aiRuntime, handlePortalApi } from "./portal";
 
-interface Env {
+export interface Env {
   DB: D1Database;
   FILES: R2Bucket;
-  ASSETS: Fetcher;
+  /** Only present on the standalone Worker deploy; Pages serves the SPA itself. */
+  ASSETS?: Fetcher;
   ADMIN_EMAIL?: string;
   ADMIN_PASSWORD_HASH?: string;
   APP_NAME?: string;
@@ -24,6 +25,8 @@ interface Env {
   AI_API_KEY?: string;
   AI_MODEL?: string;
   AI_PROVIDER?: string;
+  /** Optional origin allowed to call this Worker while developing against production. */
+  DEV_ORIGIN?: string;
 }
 
 const ADMIN = "/api/admin";
@@ -93,27 +96,53 @@ type ProjectRow = {
   created_at: string;
   updated_at: string;
   sort_order?: number;
+  display_ratio?: string | null;
+  asset_width?: number | null;
+  asset_height?: number | null;
+  duration_seconds?: number | null;
 };
 
+/** Screen layouts that can be pinned from the dashboard ("auto" follows the file). */
+const DISPLAY_RATIOS = new Set([
+  "auto",
+  "1/1",
+  "4/5",
+  "5/4",
+  "3/2",
+  "2/3",
+  "4/3",
+  "3/4",
+  "16/9",
+  "9/16",
+  "16/10",
+]);
+
 /**
- * `sort_order` was added after the first release. Existing local and deployed
- * databases get the column on first use instead of failing every project query.
+ * Columns added after the first release. Existing local and deployed databases
+ * get them on first use instead of failing every project query.
  */
-let sortOrderReady: Promise<void> | null = null;
+let projectColumnsReady: Promise<void> | null = null;
 function ensureSortOrder(env: Env): Promise<void> {
-  if (!sortOrderReady) {
-    sortOrderReady = (async () => {
+  if (!projectColumnsReady) {
+    projectColumnsReady = (async () => {
       const info = await env.DB.prepare("PRAGMA table_info(projects)").all<{ name: string }>();
-      const has = (info.results ?? []).some((column) => column.name === "sort_order");
-      if (!has) {
-        await env.DB.prepare("ALTER TABLE projects ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0").run();
+      const has = new Set((info.results ?? []).map((column) => column.name));
+      const columns: [string, string][] = [
+        ["sort_order", "ALTER TABLE projects ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0"],
+        ["display_ratio", "ALTER TABLE projects ADD COLUMN display_ratio TEXT"],
+        ["asset_width", "ALTER TABLE projects ADD COLUMN asset_width INTEGER"],
+        ["asset_height", "ALTER TABLE projects ADD COLUMN asset_height INTEGER"],
+        ["duration_seconds", "ALTER TABLE projects ADD COLUMN duration_seconds REAL"],
+      ];
+      for (const [name, sql] of columns) {
+        if (!has.has(name)) await env.DB.prepare(sql).run();
       }
     })().catch((error) => {
-      sortOrderReady = null;
-      console.error("Could not prepare projects.sort_order", error instanceof Error ? error.message : error);
+      projectColumnsReady = null;
+      console.error("Could not prepare project columns", error instanceof Error ? error.message : error);
     });
   }
-  return sortOrderReady;
+  return projectColumnsReady;
 }
 
 function json(data: unknown, status = 200, headers: HeadersInit = {}): Response {
@@ -149,11 +178,16 @@ function isLoopbackHost(hostname: string): boolean {
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
 }
 
-function originAllowed(request: Request): boolean {
+function originAllowed(request: Request, env?: Env): boolean {
   const origin = request.headers.get("Origin");
   if (!origin) return true;
   const requestOrigin = publicOrigin(request);
   if (origin === requestOrigin) return true;
+
+  // Explicit opt-in for a separate dev origin (e.g. Vite proxying to the deployed
+  // Worker). Only an exact match on the configured origin is accepted.
+  const configured = (env?.DEV_ORIGIN ?? "").trim().replace(/\/$/, "");
+  if (configured && origin.replace(/\/$/, "") === configured) return true;
 
   // Local development only: Vite proxies /api to the Worker, so the browser
   // origin is the dev server while the Worker sees its own loopback origin.
@@ -184,6 +218,10 @@ function toPublicProject(row: ProjectRow) {
     category: row.category,
     mediaUrl: `/media/${row.asset_key}`,
     thumbUrl: row.thumb_key ? `/media/${row.thumb_key}` : null,
+    ratio: row.display_ratio ?? null,
+    width: row.asset_width ?? null,
+    height: row.asset_height ?? null,
+    duration: row.duration_seconds ?? null,
     createdAt: row.created_at,
   };
 }
@@ -201,9 +239,24 @@ function toAdminProject(row: ProjectRow) {
     assetType: row.asset_type,
     assetSize: row.asset_size,
     sortOrder: row.sort_order ?? 0,
+    displayRatio: row.display_ratio ?? "auto",
+    assetWidth: row.asset_width ?? null,
+    assetHeight: row.asset_height ?? null,
+    durationSeconds: row.duration_seconds ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function readRatio(value: unknown, fallback: string | null): string | null {
+  if (value === undefined) return fallback;
+  if (typeof value !== "string") return fallback;
+  return DISPLAY_RATIOS.has(value) ? value : fallback;
+}
+
+function readNumber(value: unknown, max: number): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return null;
+  return Math.round(Math.min(value, max));
 }
 
 /* ------------------------------- public API ------------------------------- */
@@ -260,7 +313,7 @@ async function serveObject(env: Env, key: string, isPrivate: boolean): Promise<R
 /* --------------------------------- auth ---------------------------------- */
 
 async function login(request: Request, env: Env): Promise<Response> {
-  if (!originAllowed(request)) return fail("Invalid origin", 403);
+  if (!originAllowed(request, env)) return fail("Invalid origin", 403);
   if (!isConfigured(env)) {
     return fail(
       "Admin credentials are not configured. Set ADMIN_EMAIL and ADMIN_PASSWORD_HASH as Worker secrets.",
@@ -299,13 +352,13 @@ async function login(request: Request, env: Env): Promise<Response> {
 }
 
 async function logout(request: Request, env: Env): Promise<Response> {
-  if (!originAllowed(request)) return fail("Invalid origin", 403);
+  if (!originAllowed(request, env)) return fail("Invalid origin", 403);
   await destroySession(env, request);
   return json({ ok: true }, 200, { "Set-Cookie": clearSessionCookie() });
 }
 
 async function requireAdmin(request: Request, env: Env, mutating: boolean): Promise<Response | null> {
-  if (mutating && !originAllowed(request)) return fail("Invalid origin", 403);
+  if (mutating && !originAllowed(request, env)) return fail("Invalid origin", 403);
   const ok = await getSession(env, request);
   if (!ok) return fail("Unauthorized", 401);
   return null;
@@ -364,6 +417,13 @@ async function createProject(request: Request, env: Env): Promise<Response> {
   const status = body.status === "draft" ? "draft" : "published";
   const assetKey = typeof body.assetKey === "string" ? body.assetKey : "";
   const thumbKey = typeof body.thumbKey === "string" && body.thumbKey ? body.thumbKey : null;
+  const displayRatio = readRatio(body.displayRatio, "auto") ?? "auto";
+  const assetWidth = readNumber(body.assetWidth, 20000);
+  const assetHeight = readNumber(body.assetHeight, 20000);
+  const durationSeconds =
+    typeof body.durationSeconds === "number" && Number.isFinite(body.durationSeconds) && body.durationSeconds > 0
+      ? Math.min(body.durationSeconds, 86400)
+      : null;
 
   if (!assetKey.startsWith(kind === "graphic" ? "graphics/" : "videos/")) {
     return fail("Asset does not match the project kind.");
@@ -387,8 +447,8 @@ async function createProject(request: Request, env: Env): Promise<Response> {
   try {
     await env.DB.prepare(
       `INSERT INTO projects
-        (id, kind, title, description, category, status, asset_key, asset_type, asset_size, asset_hash, thumb_key, thumb_type, created_at, updated_at, sort_order)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        (id, kind, title, description, category, status, asset_key, asset_type, asset_size, asset_hash, thumb_key, thumb_type, created_at, updated_at, sort_order, display_ratio, asset_width, asset_height, duration_seconds)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
       .bind(
         id,
@@ -405,7 +465,11 @@ async function createProject(request: Request, env: Env): Promise<Response> {
         thumb?.httpMetadata?.contentType ?? null,
         ts,
         ts,
-        sortOrder
+        sortOrder,
+        displayRatio,
+        assetWidth,
+        assetHeight,
+        durationSeconds
       )
       .run();
   } catch (error) {
@@ -447,6 +511,15 @@ async function updateProject(request: Request, env: Env, id: string): Promise<Re
   let thumbKey = existing.thumb_key;
   let thumbType = existing.thumb_type;
   let replacedThumb: string | null = null;
+  const displayRatio = readRatio(body.displayRatio, existing.display_ratio ?? null);
+  const assetWidth = body.assetWidth === undefined ? existing.asset_width ?? null : readNumber(body.assetWidth, 20000);
+  const assetHeight = body.assetHeight === undefined ? existing.asset_height ?? null : readNumber(body.assetHeight, 20000);
+  const durationSeconds =
+    body.durationSeconds === undefined
+      ? existing.duration_seconds ?? null
+      : typeof body.durationSeconds === "number" && Number.isFinite(body.durationSeconds) && body.durationSeconds > 0
+        ? Math.min(body.durationSeconds, 86400)
+        : null;
 
   if (Object.prototype.hasOwnProperty.call(body, "thumbKey")) {
     const next = typeof body.thumbKey === "string" && body.thumbKey ? body.thumbKey : null;
@@ -471,6 +544,9 @@ async function updateProject(request: Request, env: Env, id: string): Promise<Re
   let assetHash = existing.asset_hash;
   let replacedAsset: string | null = null;
   let replacedAssetHash: string | null = null;
+  let nextWidth = assetWidth;
+  let nextHeight = assetHeight;
+  let nextDuration = durationSeconds;
 
   if (Object.prototype.hasOwnProperty.call(body, "assetKey")) {
     const next = typeof body.assetKey === "string" ? body.assetKey : "";
@@ -487,13 +563,18 @@ async function updateProject(request: Request, env: Env, id: string): Promise<Re
     assetType = head.httpMetadata?.contentType ?? existing.asset_type;
     assetSize = head.size;
     assetHash = head.customMetadata?.sha256 ?? null;
+    // Dimensions describe the new file; the client sends them with the replacement.
+    nextWidth = assetWidth;
+    nextHeight = assetHeight;
+    nextDuration = durationSeconds;
   }
 
   try {
     await env.DB.prepare(
       `UPDATE projects
           SET title = ?, description = ?, category = ?, status = ?, thumb_key = ?, thumb_type = ?,
-              asset_key = ?, asset_type = ?, asset_size = ?, asset_hash = ?, updated_at = ?
+              asset_key = ?, asset_type = ?, asset_size = ?, asset_hash = ?, updated_at = ?,
+              display_ratio = ?, asset_width = ?, asset_height = ?, duration_seconds = ?
         WHERE id = ?`
     )
       .bind(
@@ -508,6 +589,10 @@ async function updateProject(request: Request, env: Env, id: string): Promise<Re
         assetSize,
         assetHash,
         nowIso(),
+        displayRatio,
+        nextWidth,
+        nextHeight,
+        nextDuration,
         id
       )
       .run();
@@ -564,8 +649,27 @@ async function reorderProjects(request: Request, env: Env): Promise<Response> {
 }
 
 async function deleteUnusedUpload(env: Env, key: string): Promise<Response> {
-  const validPrefix = key.startsWith("graphics/") || key.startsWith("videos/") || key.startsWith("thumbs/");
+  const validPrefix =
+    key.startsWith("graphics/") ||
+    key.startsWith("videos/") ||
+    key.startsWith("thumbs/") ||
+    key.startsWith("artist/") ||
+    key.startsWith("originals/");
   if (!validPrefix) return fail("Invalid media key.", 400);
+
+  // The live artist portrait and its original are removed through the artist endpoints only.
+  if (key.startsWith("artist/")) {
+    const active = await readSetting(env, SETTINGS_ARTIST_PHOTO);
+    if (active?.value === key) {
+      return fail("This is the active artist photo. Use Artist Profile Management to replace or delete it.", 409);
+    }
+  }
+  if (key.startsWith("originals/")) {
+    const activeOriginal = await readSetting(env, SETTINGS_ARTIST_ORIGINAL);
+    if (activeOriginal?.value === key) {
+      return fail("This original is kept for re-editing the artist photo.", 409);
+    }
+  }
 
   const referenced = await env.DB.prepare(
     "SELECT id FROM projects WHERE asset_key = ? OR thumb_key = ? LIMIT 1"
@@ -627,8 +731,10 @@ async function upload(request: Request, env: Env): Promise<Response> {
           ? "graphic"
           : kindRaw === "artist"
             ? "artist"
-            : null;
-  if (!kind) return fail("Upload kind must be graphic, video, artist or thumbnail.", 400);
+            : kindRaw === "original"
+              ? "original"
+              : null;
+  if (!kind) return fail("Upload kind must be graphic, video, artist, original or thumbnail.", 400);
 
   const allowed = kind === "video" ? VIDEO_TYPES : IMAGE_TYPES;
   const maxBytes = kind === "thumbnail" ? LIMITS.thumbnail : kind === "video" ? LIMITS.video : LIMITS.image;
@@ -673,7 +779,15 @@ async function upload(request: Request, env: Env): Promise<Response> {
   }
 
   const prefix =
-    kind === "video" ? "videos" : kind === "graphic" ? "graphics" : kind === "artist" ? "artist" : "thumbs";
+    kind === "video"
+      ? "videos"
+      : kind === "graphic"
+        ? "graphics"
+        : kind === "artist"
+          ? "artist"
+          : kind === "original"
+            ? "originals"
+            : "thumbs";
   const key = `${prefix}/${crypto.randomUUID()}.${EXTENSIONS[type] ?? "bin"}`;
 
   await env.FILES.put(key, buffer, {
@@ -775,6 +889,8 @@ async function status(env: Env): Promise<Response> {
 const SETTINGS_MAINTENANCE = "maintenance";
 /** R2 object key of the photo hanging in the public Artist portrait frame. */
 const SETTINGS_ARTIST_PHOTO = "artist_photo";
+/** Untouched upload kept so the photograph can be re-edited from the original. */
+const SETTINGS_ARTIST_ORIGINAL = "artist_photo_original";
 /** Set lazily on the first request this isolate serves. */
 let isolateStartedAt = 0;
 
@@ -816,7 +932,7 @@ async function publicArtistPhoto(env: Env): Promise<Response> {
   );
 }
 
-/** Public: serve an artst asset only while it is the active portrait. */
+/** Public: serve an artist asset only while it is the active portrait. */
 async function serveActiveArtistPhoto(env: Env, key: string): Promise<Response> {
   const row = await readSetting(env, SETTINGS_ARTIST_PHOTO);
   if (!row?.value || row.value !== key) return new Response("Not found", { status: 404 });
@@ -836,33 +952,50 @@ function toAdminArtistPhoto(key: string, updatedAt: string, head: R2Object | nul
 async function adminArtistPhoto(request: Request, env: Env): Promise<Response> {
   if (request.method === "GET") {
     const row = await readSetting(env, SETTINGS_ARTIST_PHOTO);
-    if (!row?.value) return json({ photo: null });
+    const originalRow = await readSetting(env, SETTINGS_ARTIST_ORIGINAL);
+    const original = originalRow?.value
+      ? { key: originalRow.value, url: `${ADMIN}/media/${originalRow.value}`, updatedAt: originalRow.updatedAt }
+      : null;
+    if (!row?.value) return json({ photo: null, original });
     const head = await env.FILES.head(row.value);
-    if (!head) return json({ photo: null, warning: "The stored artist photo is missing from storage." });
-    return json({ photo: toAdminArtistPhoto(row.value, row.updatedAt, head) });
+    if (!head) return json({ photo: null, original, warning: "The stored artist photo is missing from storage." });
+    return json({ photo: toAdminArtistPhoto(row.value, row.updatedAt, head), original });
   }
 
   if (request.method === "DELETE") {
     const row = await readSetting(env, SETTINGS_ARTIST_PHOTO);
+    const originalRow = await readSetting(env, SETTINGS_ARTIST_ORIGINAL);
     try {
-      await env.DB.prepare("DELETE FROM settings WHERE key = ?").bind(SETTINGS_ARTIST_PHOTO).run();
+      await env.DB.prepare("DELETE FROM settings WHERE key IN (?, ?)")
+        .bind(SETTINGS_ARTIST_PHOTO, SETTINGS_ARTIST_ORIGINAL)
+        .run();
     } catch {
       return fail("The settings table is missing. Apply worker/schema.sql to the D1 database first.", 503);
     }
     if (row?.value) await env.FILES.delete(row.value).catch(() => undefined);
+    if (originalRow?.value) await env.FILES.delete(originalRow.value).catch(() => undefined);
     return json({ ok: true });
   }
 
-  const body = await readJson<{ assetKey?: unknown }>(request);
+  const body = await readJson<{ assetKey?: unknown; originalKey?: unknown }>(request);
   const next = typeof body?.assetKey === "string" ? body.assetKey : "";
   if (!next.startsWith("artist/")) return fail("Invalid artist photo key.");
 
+  const originalKey = typeof body?.originalKey === "string" && body.originalKey ? body.originalKey : "";
+  if (originalKey && !originalKey.startsWith("originals/")) return fail("Invalid original image key.");
+
   const head = await env.FILES.head(next);
   if (!head) return fail("The uploaded photo was not found in storage.", 404);
+  if (originalKey) {
+    const originalHead = await env.FILES.head(originalKey);
+    if (!originalHead) return fail("The stored original image was not found.", 404);
+  }
 
   const previous = await readSetting(env, SETTINGS_ARTIST_PHOTO);
+  const previousOriginal = await readSetting(env, SETTINGS_ARTIST_ORIGINAL);
   try {
     await writeSetting(env, SETTINGS_ARTIST_PHOTO, next);
+    if (originalKey) await writeSetting(env, SETTINGS_ARTIST_ORIGINAL, originalKey);
   } catch {
     return fail("The settings table is missing. Apply worker/schema.sql to the D1 database first.", 503);
   }
@@ -870,8 +1003,17 @@ async function adminArtistPhoto(request: Request, env: Env): Promise<Response> {
   if (previous?.value && previous.value !== next) {
     await env.FILES.delete(previous.value).catch(() => undefined);
   }
+  if (originalKey && previousOriginal?.value && previousOriginal.value !== originalKey) {
+    await env.FILES.delete(previousOriginal.value).catch(() => undefined);
+  }
 
-  return json({ photo: toAdminArtistPhoto(next, nowIso(), head) });
+  const savedOriginal = originalKey
+    ? { key: originalKey, url: `${ADMIN}/media/${originalKey}`, updatedAt: nowIso() }
+    : previousOriginal?.value
+      ? { key: previousOriginal.value, url: `${ADMIN}/media/${previousOriginal.value}`, updatedAt: previousOriginal.updatedAt }
+      : null;
+
+  return json({ photo: toAdminArtistPhoto(next, nowIso(), head), original: savedOriginal });
 }
 
 async function publicSiteStatus(env: Env): Promise<Response> {
@@ -956,10 +1098,20 @@ async function adminHealth(request: Request, env: Env): Promise<Response> {
   let frontendOk = false;
   let frontendDetail = "Assets binding unreachable";
   try {
-    const assetResponse = await env.ASSETS.fetch(new Request(new URL("/", request.url).toString()));
-    const contentType = assetResponse.headers.get("content-type") ?? "";
-    frontendOk = assetResponse.ok && contentType.includes("text/html");
-    frontendDetail = `${assetResponse.status} · ${contentType.split(";")[0] || "unknown"}`;
+    if (!env.ASSETS) {
+      // Cloudflare Pages serves ./dist itself and never binds ASSETS here.
+      const own = await fetch(new URL("/", request.url).toString(), { method: "HEAD" });
+      const contentType = own.headers.get("content-type") ?? "";
+      frontendOk = own.ok && contentType.includes("text/html");
+      frontendDetail = own.ok
+        ? `Pages static build · ${contentType.split(";")[0] || "text/html"}`
+        : `Pages static build returned ${own.status}`;
+    } else {
+      const assetResponse = await env.ASSETS.fetch(new Request(new URL("/", request.url).toString()));
+      const contentType = assetResponse.headers.get("content-type") ?? "";
+      frontendOk = assetResponse.ok && contentType.includes("text/html");
+      frontendDetail = `${assetResponse.status} · ${contentType.split(";")[0] || "unknown"}`;
+    }
   } catch (error) {
     frontendDetail = error instanceof Error ? error.message : "Asset fetch failed";
   }
@@ -975,7 +1127,8 @@ async function adminHealth(request: Request, env: Env): Promise<Response> {
   }
   const credentialsConfigured = isConfigured(env);
 
-  const aiConfigured = Boolean((env.AI_API_KEY ?? "").trim());
+  const ai = await aiRuntime(env);
+  const aiConfigured = ai.configured && ai.enabled;
 
   const maintenance = await readSetting(env, SETTINGS_MAINTENANCE);
   const cf = (request as Request & { cf?: { colo?: string; country?: string } }).cf;
@@ -1047,7 +1200,11 @@ async function adminHealth(request: Request, env: Env): Promise<Response> {
       id: "ai",
       label: "AI assistant",
       status: aiConfigured ? "operational" : "warning",
-      detail: aiConfigured ? "Provider key present" : "AI_API_KEY not configured",
+      detail: aiConfigured
+        ? `${ai.provider} · ${ai.model}${ai.lastSuccessAt ? " · verified" : " · key stored"}`
+        : ai.configured
+          ? "Assistant disabled in the dashboard"
+          : "No NVIDIA API key configured (dashboard or AI_API_KEY secret)",
       latencyMs: null,
       verified: true,
     },
@@ -1136,26 +1293,49 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
   return fail("Not found", 404);
 }
 
+/**
+ * The one backend used by both deployment targets:
+ *
+ * - Cloudflare Pages Functions (`functions/api/[[path]].ts` and
+ *   `functions/media/[[path]].ts`) on gursimar-portfolio.pages.dev, where Pages
+ *   serves the static build from ./dist itself;
+ * - the standalone Worker (`wrangler.worker.toml`) which additionally serves
+ *   ./dist through the ASSETS binding.
+ *
+ * Neither path has its own database: both read the same D1 database and R2
+ * bucket, which is what keeps localhost and production in sync.
+ */
+export async function handleBackendRequest(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+
+  try {
+    if (url.pathname.startsWith("/api/")) {
+      return await handleApi(request, env, url);
+    }
+
+    if (url.pathname.startsWith("/media/")) {
+      const key = decodeURIComponent(url.pathname.slice("/media/".length));
+      if (!key) return new Response("Not found", { status: 404 });
+      if (key.startsWith("artist/")) return await serveActiveArtistPhoto(env, key);
+      return await publicMedia(env, key);
+    }
+
+    return fail("Not found", 404);
+  } catch (error) {
+    console.error("Unhandled request error", error);
+    return json({ error: "Unexpected server error." }, 500);
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    const isBackendRoute = url.pathname.startsWith("/api/") || url.pathname.startsWith("/media/");
 
-    try {
-      if (url.pathname.startsWith("/api/")) {
-        return await handleApi(request, env, url);
-      }
-
-      if (url.pathname.startsWith("/media/")) {
-        const key = decodeURIComponent(url.pathname.slice("/media/".length));
-        if (!key) return new Response("Not found", { status: 404 });
-        if (key.startsWith("artist/")) return await serveActiveArtistPhoto(env, key);
-        return await publicMedia(env, key);
-      }
-
-      return await env.ASSETS.fetch(request);
-    } catch (error) {
-      console.error("Unhandled request error", error);
-      return json({ error: "Unexpected server error." }, 500);
+    if (!isBackendRoute && env.ASSETS) {
+      return env.ASSETS.fetch(request);
     }
+
+    return handleBackendRequest(request, env);
   },
 };

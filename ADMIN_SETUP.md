@@ -1,8 +1,9 @@
 # Portfolio platform — admin dashboard, requests, live chat and AI assistant
 
-The private dashboard lives at `/admin` and is backed by the same Cloudflare Worker that
-serves the public site. Data lives in D1 (SQL), media and uploads in R2, and every admin
-route re-validates a server-side session. The vault entrance is at `/security`.
+The private dashboard lives at `/admin` and is backed by the same backend that serves
+the public site (Cloudflare Pages Functions in production, the bound Worker locally).
+Data lives in D1 (SQL), media and uploads in R2, and every admin route re-validates a
+server-side session. The vault entrance is at `/security`.
 
 ## Features and where they live
 
@@ -46,46 +47,161 @@ Worker secrets (never committed, never sent to the browser):
 | --- | --- |
 | `ADMIN_EMAIL` | Administrator sign-in email. Set to `gursimarsingh9390@gmail.com`. |
 | `ADMIN_PASSWORD_HASH` | `pbkdf2:100000:<salt>:<hash>` from `scripts/hash-admin-password.mjs`. |
-| `AI_API_KEY` | API key for the OpenAI-compatible provider. |
+| `AI_API_KEY` | NVIDIA NIM API key (server-side only; dashboard storage is preferred). |
 
 Plain Worker variables / bindings:
 
 | Name | Default | Notes |
 | --- | --- | --- |
-| `AI_API_URL` | `https://api.openai.com/v1/chat/completions` | Any OpenAI-compatible endpoint. |
-| `AI_MODEL` | `gpt-4o-mini` | Overridable per deployment from AI Assistant Settings. |
-| `AI_PROVIDER` | `openai-compatible` | Label only; shown in the dashboard. |
+| `AI_API_URL` | `https://integrate.api.nvidia.com/v1/chat/completions` | Any OpenAI-compatible endpoint. |
+| `AI_MODEL` | `google/gemma-4-31b-it` | Overridable per deployment from AI configuration. |
+| `AI_PROVIDER` | `nvidia-nim` | Label only; shown in the dashboard. |
 | `DB` | `wrangler.toml` D1 binding | All relational data. |
 | `FILES` | `wrangler.toml` R2 binding | Portfolio media, request attachments, AI uploads. |
 
 `.dev.vars.example` documents the local equivalents. `.dev.vars` is git-ignored.
 
-## Local development
+## Shared backend (localhost and production are the same system)
+
+There is exactly one database and one media bucket. `wrangler.toml` marks both
+bindings `remote = true`, so `npm run dev:api` runs the Worker locally but reads and
+writes the **deployed** D1 database and R2 bucket. Anything you upload, edit, delete
+or toggle on localhost lands in production, and the live site reads the same rows.
+
+```
+browser :5173 ─┐
+               ├─ /api, /media ─► Worker (wrangler dev) ─► D1 portfolio-db (remote)
+public domain ─┘                                    └─► R2 portfolio-media (remote)
+```
+
+`wrangler dev` does **not** copy production secrets, so the administrator credentials
+come from `.dev.vars` locally and from Worker secrets in production. Both must hold the
+**same** `ADMIN_EMAIL` and `ADMIN_PASSWORD_HASH`, otherwise localhost sign-in succeeds
+while the deployed sign-in fails.
+
+### Local development
 
 ```bash
 npm install
-cp .dev.vars.example .dev.vars        # then fill in the values
-node scripts/hash-admin-password.mjs "a-long-unique-password"
-npx wrangler d1 execute portfolio-db --local --file worker/schema.sql
-
-npm run worker:dev                    # Worker + built site on http://127.0.0.1:8787
-npm run dev                           # Vite on :5173, proxies /api and /media
+cp .dev.vars.example .dev.vars        # fill in ADMIN_EMAIL + hash
+node scripts/hash-admin-password.mjs "a-long-unique-password"   # put the output in .dev.vars
+npx wrangler login                    # required for remote bindings
+npm run db:remote                     # schema on the shared database (idempotent)
+npm run dev:api                       # Worker :8787 against shared D1 + R2
+npm run dev                           # Vite :5173, proxies /api and /media
 ```
 
-## Production deployment
+Offline work without a Cloudflare account:
 
 ```bash
+npm run dev:api:local                 # emulated .wrangler/state, never touches production
+npm run db:local
+```
+
+Alternative: point the Vite dev server at the deployed Worker instead of running one
+locally. The browser then talks to the exact production backend instance.
+
+```bash
+# .env.local
+API_PROXY_TARGET=https://your-worker.workers.dev
+
+# Worker secret, so the dashboard's origin check accepts the dev origin
+npx wrangler secret put DEV_ORIGIN    # value: http://localhost:5173
+npm run dev
+```
+
+### Production deployment (existing Pages project, unchanged URL)
+
+Production is the Cloudflare Pages project `gursimar-portfolio` at
+`https://gursimar-portfolio.pages.dev/`. It builds from `main` with:
+
+| Setting | Value |
+| --- | --- |
+| Repository | `github.com/Gursimarsingh-ops/Gursimar-Portfolio` |
+| Production branch | `main` |
+| Framework preset | Vite (or None) |
+| Build command | `npm run build` |
+| Build output directory | `dist` |
+| Node version | 20 or 22 |
+
+A static-only Pages build serves the SPA but has **no `/api`** — that is exactly the
+"uploads work locally, nothing changes live / login fails in production" symptom. The
+backend therefore ships *with* the Pages project as Pages Functions:
+
+```
+functions/api/[[path]].ts    -> /api/*    (projects, admin, requests, chat, AI, health)
+functions/media/[[path]].ts  -> /media/*  (R2 images and videos)
+public/_routes.json          -> only those prefixes run as Functions
+```
+
+Both adapters call the same `handleBackendRequest()` in `worker/index.ts`, so the
+public site, `/admin` and `/security` on the live domain use the identical code and the
+identical D1 + R2 instance as localhost. `wrangler.toml` is the Pages config
+(`pages_build_output_dir = "./dist"`); `wrangler.worker.toml` keeps the standalone
+Worker target used by `npm run dev:api`.
+
+One-time setup:
+
+```bash
+npx wrangler login
 npx wrangler d1 create portfolio-db          # copy database_id into wrangler.toml
 npx wrangler r2 bucket create portfolio-media
-npx wrangler d1 execute portfolio-db --remote --file worker/schema.sql
-
-npx wrangler secret put ADMIN_EMAIL
-npx wrangler secret put ADMIN_PASSWORD_HASH
-npx wrangler secret put AI_API_KEY           # optional until the chatbot is enabled
-
-npm run build
-npx wrangler deploy
 ```
+
+Then in the Pages dashboard, for the **Production** environment:
+
+1. Settings → Functions → Bindings: `DB` = D1 `portfolio-db`, `FILES` = R2
+   `portfolio-media` (the same names as `wrangler.toml`).
+2. Settings → Variables and Secrets: `ADMIN_EMAIL`, `ADMIN_PASSWORD_HASH`,
+   optionally `AI_API_KEY`. These are the only place the production password hash
+   and API key exist — never the repo.
+3. Settings → Builds & deployments: build command `npm run build`, output `dist`,
+   production branch `main`.
+
+Then:
+
+```bash
+npm run db:remote        # schema on the shared database (idempotent)
+npm run migrate:cloudflare   # copy existing local projects + media up
+git push origin main     # Pages builds, runs Functions, deploys
+```
+
+`npm run deploy` (manual, same project) runs `scripts/check-cloudflare-config.mjs`
+first and refuses while the placeholder `database_id` is in `wrangler.toml`:
+
+```bash
+npm run deploy           # wrangler pages deploy  (reads wrangler.toml)
+npm run deploy:worker    # alternative: standalone Worker + assets
+```
+
+### Why changes were not appearing
+
+Cloudflare Pages deploys the **pushed commit**, not the working tree. Any change that
+was never committed and pushed to `main` could not reach the live site, and even a
+pushed SPA build could not write data because the static project had no `/api`. Both
+halves are fixed here: the backend now deploys with the site, and every change must
+reach `main` to be live.
+
+### Migrating existing local content
+
+```bash
+npm run migrate:cloudflare -- --dry-run   # list rows and objects that would move
+npm run migrate:cloudflare                # schema + INSERT OR IGNORE rows + R2 uploads
+```
+
+Production rows are never overwritten; only missing records are added. Objects keep
+their original keys, so existing project links stay valid.
+
+### Verifying the shared setup
+
+```bash
+npm run deploy:check                       # config/secret sanity check
+npx wrangler d1 execute portfolio-db --remote --command "SELECT COUNT(*) FROM projects"
+curl -s https://<your-domain>/api/projects | head -c 400
+```
+
+The project count must match between localhost (`/api/projects`) and the deployed
+domain. If they differ, the two environments are still using different databases.
 
 ## Security model
 

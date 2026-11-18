@@ -1,5 +1,12 @@
 import { parseCookies, SESSION_COOKIE, sha256Hex } from "./auth";
-import { AI_DEFAULT_MODEL, AI_GUARDRAILS, PORTFOLIO_KNOWLEDGE } from "./knowledge";
+import {
+  AI_DEFAULT_API_URL,
+  AI_DEFAULT_MODEL,
+  AI_DEFAULT_PROVIDER,
+  AI_GUARDRAILS,
+  AI_VISION_MODEL_HINT,
+  PORTFOLIO_KNOWLEDGE,
+} from "./knowledge";
 
 /**
  * Client requests, live conversations, the AI assistant and the extended admin API.
@@ -151,7 +158,17 @@ interface AiSettings {
   enabled: boolean;
   model: string;
   provider: string;
+  /** Custom endpoint stored by the administrator. Never returned to the browser. */
+  apiUrl: string;
+  /** API key stored server-side in D1. Never returned to the browser. */
+  apiKey: string;
+  /** Extra portfolio facts maintained from the dashboard. */
+  knowledge: string;
   updatedAt: string | null;
+  lastTestAt: string | null;
+  lastSuccessAt: string | null;
+  lastError: string | null;
+  lastLatencyMs: number | null;
 }
 
 async function readAiSettings(env: PortalEnv): Promise<AiSettings> {
@@ -164,12 +181,120 @@ async function readAiSettings(env: PortalEnv): Promise<AiSettings> {
       parsed = {};
     }
   }
+  // The project moved from a generic OpenAI-compatible setup to NVIDIA NIM.
+  // Legacy placeholder values are ignored so the NIM defaults apply.
+  const storedModel = typeof parsed.model === "string" ? parsed.model : "";
+  const storedProvider = typeof parsed.provider === "string" ? parsed.provider : "";
   return {
     enabled: parsed.enabled !== false,
-    model: typeof parsed.model === "string" ? parsed.model : "",
-    provider: typeof parsed.provider === "string" && parsed.provider ? parsed.provider : env.AI_PROVIDER || "openai-compatible",
+    model: LEGACY_AI_MODELS.has(storedModel) ? "" : storedModel,
+    provider:
+      storedProvider && storedProvider !== "openai-compatible"
+        ? storedProvider
+        : env.AI_PROVIDER && env.AI_PROVIDER !== "openai-compatible"
+          ? env.AI_PROVIDER
+          : AI_DEFAULT_PROVIDER,
+    apiUrl: typeof parsed.apiUrl === "string" ? parsed.apiUrl : "",
+    apiKey: typeof parsed.apiKey === "string" ? parsed.apiKey : "",
+    knowledge: typeof parsed.knowledge === "string" ? parsed.knowledge : "",
     updatedAt: row?.updatedAt ?? null,
+    lastTestAt: typeof parsed.lastTestAt === "string" ? parsed.lastTestAt : null,
+    lastSuccessAt: typeof parsed.lastSuccessAt === "string" ? parsed.lastSuccessAt : null,
+    lastError: typeof parsed.lastError === "string" ? parsed.lastError : null,
+    lastLatencyMs: typeof parsed.lastLatencyMs === "number" ? parsed.lastLatencyMs : null,
   };
+}
+
+/** Placeholder models from the earlier OpenAI-compatible setup. */
+const LEGACY_AI_MODELS = new Set(["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini"]);
+
+/* The dashboard key lives in D1 and an environment secret can act as a fallback. */
+function aiApiKey(env: PortalEnv, settings: AiSettings): string {
+  return settings.apiKey.trim() || (env.AI_API_KEY ?? "").trim();
+}
+
+function aiApiUrl(env: PortalEnv, settings: AiSettings): string {
+  return settings.apiUrl.trim() || (env.AI_API_URL ?? "").trim() || AI_DEFAULT_API_URL;
+}
+
+function aiModel(env: PortalEnv, settings: AiSettings): string {
+  const envModel = (env.AI_MODEL ?? "").trim();
+  return settings.model.trim() || (envModel && !LEGACY_AI_MODELS.has(envModel) ? envModel : "") || AI_DEFAULT_MODEL;
+}
+
+function modelSupportsVision(model: string): boolean {
+  return AI_VISION_MODEL_HINT.test(model);
+}
+
+async function writeAiSettings(env: PortalEnv, settings: AiSettings): Promise<void> {
+  const payload = {
+    enabled: settings.enabled,
+    model: settings.model,
+    provider: settings.provider,
+    apiUrl: settings.apiUrl,
+    apiKey: settings.apiKey,
+    knowledge: settings.knowledge,
+    lastTestAt: settings.lastTestAt,
+    lastSuccessAt: settings.lastSuccessAt,
+    lastError: settings.lastError,
+    lastLatencyMs: settings.lastLatencyMs,
+  };
+  await writeSetting(env, SETTING_AI, JSON.stringify(payload));
+}
+
+/** Public view of the AI configuration: everything except the credentials. */
+function describeAi(env: PortalEnv, settings: AiSettings) {
+  const model = aiModel(env, settings);
+  const key = aiApiKey(env, settings);
+  return {
+    settings: {
+      enabled: settings.enabled,
+      model,
+      provider: settings.provider || AI_DEFAULT_PROVIDER,
+      apiUrl: aiApiUrl(env, settings),
+      knowledge: settings.knowledge,
+      updatedAt: settings.updatedAt,
+      lastTestAt: settings.lastTestAt,
+      lastSuccessAt: settings.lastSuccessAt,
+      lastError: settings.lastError,
+      lastLatencyMs: settings.lastLatencyMs,
+    },
+    configured: Boolean(key),
+    keyHint: key ? `••••${key.slice(-4)}` : null,
+    keySource: settings.apiKey ? "dashboard" : key ? "environment" : "none",
+    model,
+    vision: modelSupportsVision(model),
+    defaultModel: AI_DEFAULT_MODEL,
+    defaultApiUrl: AI_DEFAULT_API_URL,
+    defaultProvider: AI_DEFAULT_PROVIDER,
+    envModel: env.AI_MODEL ?? null,
+    providerEnv: env.AI_PROVIDER ?? null,
+  };
+}
+
+function providerErrorDetail(raw: string): string {
+  const trimmed = raw.slice(0, 900);
+  try {
+    const parsed = JSON.parse(trimmed) as {
+      error?: { message?: unknown; type?: unknown } | string;
+      message?: unknown;
+      detail?: unknown;
+    };
+    const message =
+      typeof parsed.error === "string"
+        ? parsed.error
+        : parsed.error && typeof parsed.error === "object" && typeof parsed.error.message === "string"
+          ? parsed.error.message
+          : typeof parsed.message === "string"
+            ? parsed.message
+            : typeof parsed.detail === "string"
+              ? parsed.detail
+              : "";
+    if (message) return message.slice(0, 400);
+  } catch {
+    /* not JSON */
+  }
+  return trimmed.replace(/\s+/g, " ").slice(0, 400) || "No response body";
 }
 
 /* ------------------------------- file types -------------------------------- */
@@ -558,11 +683,13 @@ interface AiHistoryMessage {
 
 async function aiStatus(env: PortalEnv): Promise<Response> {
   const settings = await readAiSettings(env);
+  const model = aiModel(env, settings);
   return json({
     enabled: settings.enabled,
-    configured: Boolean(env.AI_API_KEY),
-    provider: settings.provider,
-    model: settings.model || env.AI_MODEL || AI_DEFAULT_MODEL,
+    configured: Boolean(aiApiKey(env, settings)),
+    provider: settings.provider || AI_DEFAULT_PROVIDER,
+    model,
+    vision: modelSupportsVision(model),
     limits: {
       messageChars: 4000,
       files: 5,
@@ -581,6 +708,18 @@ function attachmentsFor(row: AiMessageRow): AiHistoryMessage["attachments"] {
   }
 }
 
+class AiProviderError extends Error {
+  status: number;
+  detail: string;
+
+  constructor(status: number, detail: string) {
+    super(`provider_${status}`);
+    this.name = "AiProviderError";
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
 async function generateReply(
   env: PortalEnv,
   settings: AiSettings,
@@ -588,13 +727,19 @@ async function generateReply(
   userText: string,
   images: { type: string; base64: string }[]
 ): Promise<string> {
-  const apiUrl = env.AI_API_URL?.trim() || "https://api.openai.com/v1/chat/completions";
-  const model = settings.model.trim() || env.AI_MODEL?.trim() || AI_DEFAULT_MODEL;
+  const apiUrl = aiApiUrl(env, settings);
+  const model = aiModel(env, settings);
+  const apiKey = aiApiKey(env, settings);
+  const extraKnowledge = settings.knowledge.trim();
 
   const messages: Record<string, unknown>[] = [
     {
       role: "system",
-      content: `${AI_GUARDRAILS}\n\nPORTFOLIO KNOWLEDGE (the only facts you may rely on):\n${PORTFOLIO_KNOWLEDGE}`,
+      content:
+        `${AI_GUARDRAILS}\n\nPORTFOLIO KNOWLEDGE (the only facts you may rely on):\n${PORTFOLIO_KNOWLEDGE}` +
+        (extraKnowledge
+          ? `\n\nADDITIONAL KNOWLEDGE (maintained by GurSimar in the dashboard; treat as facts):\n${extraKnowledge}`
+          : ""),
     },
     ...history.map((entry) => ({
       role: entry.role,
@@ -605,7 +750,8 @@ async function generateReply(
     })),
   ];
 
-  if (images.length > 0) {
+  const vision = modelSupportsVision(model);
+  if (images.length > 0 && vision) {
     messages.push({
       role: "user",
       content: [
@@ -627,15 +773,15 @@ async function generateReply(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${env.AI_API_KEY}`,
+        Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({ model, messages, temperature: 0.5, max_tokens: 700 }),
       signal: controller.signal,
     });
 
     if (!response.ok) {
-      console.error("AI provider error", response.status, (await response.text()).slice(0, 300));
-      throw new Error(`provider_${response.status}`);
+      const raw = await response.text();
+      throw new AiProviderError(response.status, providerErrorDetail(raw));
     }
 
     const data = (await response.json()) as { choices?: { message?: { content?: unknown } }[] };
@@ -665,7 +811,7 @@ async function aiChat(request: Request, env: PortalEnv): Promise<Response> {
   if (!settings.enabled) {
     return fail("The AI assistant is currently disabled. Please use the Hire Me form or start a direct conversation instead.", 503);
   }
-  if (!env.AI_API_KEY) {
+  if (!aiApiKey(env, settings)) {
     return fail(
       "The AI assistant is not configured yet. Please use the Hire Me form or start a direct conversation instead.",
       503
@@ -773,20 +919,46 @@ async function aiChat(request: Request, env: PortalEnv): Promise<Response> {
       documents.map((doc) => `--- ${doc.name} ---\n${doc.text}`).join("\n\n")
     : "";
 
+  const model = aiModel(env, settings);
+  const vision = modelSupportsVision(model);
+  const limitations: string[] = [];
+  if (images.length > 0 && !vision) {
+    limitations.push(
+      `The configured model (${model}) cannot view images, so the images were not transmitted. ` +
+        `Tell the visitor that image analysis needs a vision-capable model selected in the dashboard.`
+    );
+  }
+  if (attachmentRows.some((file) => file.type.startsWith("video/"))) {
+    limitations.push("Video content cannot be analysed; only its filename and type were received.");
+  }
+
   const contextNote = attachmentRows.length
     ? `${message}\n\n(Attached files: ${attachmentRows.map((file) => `${file.name} [${file.type || "unknown"}]`).join(", ")}. ` +
-      `Images are shown to you directly; text and PDF files have their text extracted below. ` +
+      (vision
+        ? "Images are shown to you directly; text and PDF files have their text extracted below. "
+        : "Images cannot be viewed by the current model. ") +
       `Videos and office documents were received but their content cannot be read.)` +
+      (limitations.length ? `\n\nCAPABILITY LIMITS: ${limitations.join(" ")}` : "") +
       documentNote
     : message;
 
   let reply: string;
   try {
     reply = await generateReply(env, settings, history, contextNote, images);
+    await writeAiSettings(env, { ...settings, lastSuccessAt: nowIso(), lastError: null }).catch(() => undefined);
   } catch (error) {
-    console.error("AI request failed", error instanceof Error ? error.message : error);
+    const detail =
+      error instanceof AiProviderError
+        ? `HTTP ${error.status}: ${error.detail}`
+        : error instanceof Error
+          ? error.message
+          : "unknown";
+    await writeAiSettings(env, { ...settings, lastError: detail.slice(0, 400) }).catch(() => undefined);
+    console.error("AI request failed", detail);
     return fail(
-      "The AI assistant is temporarily unavailable. Please try again shortly, or use the Hire Me form or direct chat.",
+      error instanceof AiProviderError
+        ? `The AI provider rejected the request (HTTP ${error.status}). Check the API key, model and endpoint in the AI configuration panel.`
+        : "The AI assistant is temporarily unavailable. Please try again shortly, or use the Hire Me form or direct chat.",
       502
     );
   }
@@ -1151,9 +1323,9 @@ async function adminOverview(env: PortalEnv): Promise<Response> {
     availability,
     ai: {
       enabled: ai.enabled,
-      configured: Boolean(env.AI_API_KEY),
-      provider: ai.provider,
-      model: ai.model || env.AI_MODEL || AI_DEFAULT_MODEL,
+      configured: Boolean(aiApiKey(env, ai)),
+      provider: ai.provider || AI_DEFAULT_PROVIDER,
+      model: aiModel(env, ai),
     },
     recentRequests: (recent.results ?? []).map(toAdminRequest),
   });
@@ -1174,29 +1346,240 @@ async function adminAvailability(request: Request, env: PortalEnv): Promise<Resp
 async function adminAiSettings(request: Request, env: PortalEnv): Promise<Response> {
   if (request.method === "GET") {
     const settings = await readAiSettings(env);
-    return json({
-      settings,
-      configured: Boolean(env.AI_API_KEY),
-      apiUrl: env.AI_API_URL ? "custom endpoint configured" : "default OpenAI-compatible endpoint",
-      envModel: env.AI_MODEL ?? null,
-      providerEnv: env.AI_PROVIDER ?? null,
-      defaultModel: AI_DEFAULT_MODEL,
-    });
+    return json(describeAi(env, settings));
   }
 
-  const body = await readJson<{ enabled?: unknown; model?: unknown; provider?: unknown }>(request);
+  const body = await readJson<{
+    enabled?: unknown;
+    model?: unknown;
+    provider?: unknown;
+    apiUrl?: unknown;
+    apiKey?: unknown;
+    clearApiKey?: unknown;
+    knowledge?: unknown;
+  }>(request);
   if (!body) return fail("Invalid JSON body.");
 
   const current = await readAiSettings(env);
-  const next = {
+
+  let apiUrl = current.apiUrl;
+  if (body.apiUrl !== undefined) {
+    apiUrl = cleanText(body.apiUrl, 300);
+    if (apiUrl && !/^https:\/\/[^\s]+$/i.test(apiUrl)) {
+      return fail("The API endpoint must be a valid https:// URL.");
+    }
+  }
+
+  let apiKey = current.apiKey;
+  let clearedKey = false;
+  if (body.clearApiKey === true) {
+    apiKey = "";
+    clearedKey = true;
+  } else if (typeof body.apiKey === "string" && body.apiKey.trim()) {
+    apiKey = body.apiKey.trim().slice(0, 400);
+  }
+
+  let knowledge = current.knowledge;
+  if (typeof body.knowledge === "string") {
+    knowledge = body.knowledge.slice(0, 12000);
+  }
+
+  const next: AiSettings = {
     enabled: typeof body.enabled === "boolean" ? body.enabled : current.enabled,
-    model: cleanText(body.model, 80) || current.model,
-    provider: cleanText(body.provider, 40) || current.provider,
+    model: body.model !== undefined ? cleanText(body.model, 120) : current.model,
+    provider: cleanText(body.provider, 40) || current.provider || AI_DEFAULT_PROVIDER,
+    apiUrl,
+    apiKey,
+    knowledge,
+    updatedAt: current.updatedAt,
+    lastTestAt: current.lastTestAt,
+    lastSuccessAt: current.lastSuccessAt,
+    lastError: clearedKey ? null : current.lastError,
+    lastLatencyMs: clearedKey ? null : current.lastLatencyMs,
   };
 
-  await writeSetting(env, SETTING_AI, JSON.stringify(next));
+  if (body.model !== undefined && !next.model) {
+    return fail("Model name cannot be empty.");
+  }
+
+  await writeAiSettings(env, next);
   const saved = await readAiSettings(env);
-  return json({ settings: saved, configured: Boolean(env.AI_API_KEY) });
+  return json(describeAi(env, saved));
+}
+
+/** Real provider round-trip. Uses the posted key when supplied, otherwise the stored one. */
+async function adminAiTest(request: Request, env: PortalEnv): Promise<Response> {
+  if (!originAllowed(request)) return fail("Invalid origin", 403);
+
+  const body = await readJson<{ apiKey?: unknown; apiUrl?: unknown; model?: unknown }>(request);
+  const current = await readAiSettings(env);
+
+  const postedKey = typeof body?.apiKey === "string" ? body.apiKey.trim() : "";
+  const key = postedKey || aiApiKey(env, current);
+  const postedUrl = typeof body?.apiUrl === "string" ? body.apiUrl.trim() : "";
+  const url = postedUrl || aiApiUrl(env, current);
+  const model = (typeof body?.model === "string" ? body.model.trim() : "") || aiModel(env, current);
+
+  if (!/^https:\/\/[^\s]+$/i.test(url)) {
+    return fail("The API endpoint must be a valid https:// URL.");
+  }
+  if (!key) {
+    return json({
+      ok: false,
+      status: null,
+      latencyMs: 0,
+      endpoint: url,
+      model,
+      message: "No API key is stored yet. Paste your NVIDIA API key and test again.",
+    });
+  }
+
+  const started = Date.now();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30_000);
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: "Reply with the single word OK." }],
+        temperature: 0,
+        max_tokens: 16,
+        stream: false,
+      }),
+      signal: controller.signal,
+    });
+
+    const raw = await response.text();
+    const latencyMs = Date.now() - started;
+
+    if (!response.ok) {
+      const detail = providerErrorDetail(raw);
+      const saved = await readAiSettings(env);
+      await writeAiSettings(env, {
+        ...saved,
+        lastTestAt: nowIso(),
+        lastError: `Test failed · HTTP ${response.status}: ${detail}`.slice(0, 400),
+      }).catch(() => undefined);
+      return json({
+        ok: false,
+        status: response.status,
+        latencyMs,
+        endpoint: url,
+        model,
+        message: `The provider rejected the request (HTTP ${response.status}).`,
+        diagnostics: detail,
+      });
+    }
+
+    let reply = "";
+    let reportedModel = model;
+    try {
+      const data = JSON.parse(raw) as {
+        model?: unknown;
+        choices?: { message?: { content?: unknown } }[];
+      };
+      const content = data.choices?.[0]?.message?.content;
+      reply =
+        typeof content === "string"
+          ? content
+          : Array.isArray(content)
+            ? content
+                .map((part) => (part && typeof part === "object" && "text" in part ? String((part as { text: unknown }).text) : ""))
+                .join("")
+            : "";
+      if (typeof data.model === "string" && data.model) reportedModel = data.model;
+    } catch {
+      reply = raw.slice(0, 120);
+    }
+
+    const ts = nowIso();
+    const saved = await readAiSettings(env);
+    await writeAiSettings(env, {
+      ...saved,
+      lastTestAt: ts,
+      lastSuccessAt: ts,
+      lastError: null,
+      lastLatencyMs: latencyMs,
+    }).catch(() => undefined);
+
+    return json({
+      ok: true,
+      status: response.status,
+      latencyMs,
+      endpoint: url,
+      model: reportedModel,
+      message: `Connected to ${reportedModel} in ${latencyMs} ms.`,
+      reply: reply.trim().slice(0, 200),
+    });
+  } catch (error) {
+    const latencyMs = Date.now() - started;
+    const message =
+      error instanceof Error && error.name === "AbortError"
+        ? "The provider did not respond within 30 seconds."
+        : `Could not reach the provider: ${error instanceof Error ? error.message.slice(0, 160) : "unknown error"}`;
+    const saved = await readAiSettings(env);
+    await writeAiSettings(env, {
+      ...saved,
+      lastTestAt: nowIso(),
+      lastError: message.slice(0, 400),
+    }).catch(() => undefined);
+    return json({ ok: false, status: null, latencyMs, endpoint: url, model, message });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Runtime AI configuration for the health probe (no credentials returned). */
+export async function aiRuntime(env: PortalEnv) {
+  const settings = await readAiSettings(env);
+  return {
+    enabled: settings.enabled,
+    configured: Boolean(aiApiKey(env, settings)),
+    provider: settings.provider || AI_DEFAULT_PROVIDER,
+    model: aiModel(env, settings),
+    lastSuccessAt: settings.lastSuccessAt,
+    lastError: settings.lastError,
+  };
+}
+
+/** Clears a thread's stored messages (the browser keeps the capability id). */
+async function clearThread(request: Request, env: PortalEnv, threadId: string): Promise<Response> {
+  if (!originAllowed(request)) return fail("Invalid origin", 403);
+  if (!/^[A-Za-z0-9-]{8,64}$/.test(threadId)) return fail("Invalid conversation id.");
+  await env.DB.prepare("DELETE FROM ai_messages WHERE thread_id = ?").bind(threadId).run();
+  await env.DB.prepare("UPDATE ai_threads SET message_count = 0, last_seen_at = ? WHERE id = ?")
+    .bind(nowIso(), threadId)
+    .run();
+  return json({ ok: true, threadId });
+}
+
+/** Server-side conversation history, restored in the browser after a reload. */
+async function aiThreadHistory(env: PortalEnv, threadId: string): Promise<Response> {
+  if (!/^[A-Za-z0-9-]{8,64}$/.test(threadId)) return fail("Invalid conversation id.");
+  const thread = await env.DB.prepare("SELECT id FROM ai_threads WHERE id = ?")
+    .bind(threadId)
+    .first<{ id: string }>();
+  if (!thread) return json({ threadId, messages: [] });
+
+  const { results } = await env.DB.prepare(
+    "SELECT * FROM ai_messages WHERE thread_id = ? ORDER BY created_at ASC LIMIT 200"
+  )
+    .bind(threadId)
+    .all<AiMessageRow>();
+
+  return json({
+    threadId,
+    messages: (results ?? []).map((row) => ({
+      id: row.id,
+      role: row.role,
+      content: row.content,
+      attachments: attachmentsFor(row),
+      createdAt: row.created_at,
+    })),
+  });
 }
 
 async function adminSecurity(request: Request, env: PortalEnv): Promise<Response> {
@@ -1206,6 +1589,7 @@ async function adminSecurity(request: Request, env: PortalEnv): Promise<Response
     )
       .bind(nowIso())
       .all<{ created_at: string; expires_at: string }>();
+    const securityAi = await readAiSettings(env);
 
     return json({
       administrator: { email: env.ADMIN_EMAIL ?? null, configured: Boolean(env.ADMIN_EMAIL && env.ADMIN_PASSWORD_HASH) },
@@ -1213,7 +1597,10 @@ async function adminSecurity(request: Request, env: PortalEnv): Promise<Response
         active: sessions.results?.length ?? 0,
         recent: (sessions.results ?? []).map((row) => ({ createdAt: row.created_at, expiresAt: row.expires_at })),
       },
-      ai: { configured: Boolean(env.AI_API_KEY), provider: env.AI_PROVIDER ?? "openai-compatible" },
+      ai: {
+        configured: Boolean(aiApiKey(env, securityAi)),
+        provider: securityAi.provider || AI_DEFAULT_PROVIDER,
+      },
       controls: {
         sessionTtlDays: 7,
         loginAttempts: "8 per 15 minutes",
@@ -1260,6 +1647,10 @@ export async function handlePortalApi(
   if (path === "/api/ai/status" && method === "GET") return aiStatus(env);
   if (path === "/api/ai/chat" && method === "POST") return aiChat(request, env);
 
+  const threadMatch = path.match(/^\/api\/ai\/thread\/([A-Za-z0-9-]{8,64})$/);
+  if (threadMatch && method === "GET") return aiThreadHistory(env, threadMatch[1]);
+  if (threadMatch && method === "DELETE") return clearThread(request, env, threadMatch[1]);
+
   if (path === "/api/chat/start" && method === "POST") return startConversation(request, env);
 
   const chatMatch = path.match(/^\/api\/chat\/([a-f0-9-]{36})$/i);
@@ -1297,6 +1688,9 @@ export async function handlePortalApi(
   }
   if (path === "/api/admin/ai-settings" && (method === "GET" || method === "POST")) {
     return adminAiSettings(request, env);
+  }
+  if (path === "/api/admin/ai-settings/test" && method === "POST") {
+    return adminAiTest(request, env);
   }
   if (path === "/api/admin/security" && method === "GET") return adminSecurity(request, env);
   if (path === "/api/admin/security/revoke" && method === "POST") return adminRevokeSessions(request, env);

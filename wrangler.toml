@@ -1,18 +1,29 @@
-name = "gursimar-portfolio"
-main = "worker/index.ts"
-compatibility_date = "2024-11-01"
+# ---------------------------------------------------------------------------
+# Production: Cloudflare Pages project "gursimar-portfolio"
+# URL: https://gursimar-portfolio.pages.dev/  (unchanged)
+#
+# This file is read by Cloudflare Pages (Git-connected build on branch `main`)
+# and by `wrangler pages deploy`. It intentionally has NO `main` entry: Pages
+# serves ./dist as static assets and runs the backend through Pages Functions.
+#
+#   functions/api/[[path]].ts   -> /api/*   (admin, inquiries, chat, AI, health)
+#   functions/media/[[path]].ts -> /media/* (R2 images and videos)
+#
+# Both bindings below MUST also exist on the Pages project under
+# Settings -> Functions -> Bindings. They point at the same D1 database and R2
+# bucket the local Worker uses, so localhost and production share one dataset.
+# ---------------------------------------------------------------------------
 
-# Built SPA (index.html + assets) is uploaded from ./dist.
-[assets]
-directory = "./dist"
-binding = "ASSETS"
-run_worker_first = true
-not_found_handling = "single-page-application"
+name = "gursimar-portfolio"
+compatibility_date = "2024-11-01"
+pages_build_output_dir = "./dist"
 
 [[d1_databases]]
 binding = "DB"
 database_name = "portfolio-db"
-# Replace with the real database_id from `wrangler d1 create portfolio-db`.
+# Real id from `npx wrangler d1 create portfolio-db` (or `npx wrangler d1 list`).
+# The placeholder keeps `npm run build` honest: it makes `npm run deploy:check`
+# fail instead of shipping a site whose dashboard writes nowhere.
 database_id = "00000000-0000-4000-8000-000000000000"
 
 [[r2_buckets]]
@@ -20,5 +31,6 @@ binding = "FILES"
 bucket_name = "portfolio-media"
 
 [vars]
-# Non-secret configuration. ADMIN_EMAIL and ADMIN_PASSWORD_HASH are secrets.
+# Non-secret configuration. ADMIN_EMAIL, ADMIN_PASSWORD_HASH and AI_API_KEY are
+# Pages secrets (Settings -> Variables and Secrets), never this file.
 APP_NAME = "Gursimar Singh Portfolio"

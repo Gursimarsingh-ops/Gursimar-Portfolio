@@ -8,7 +8,7 @@ export function AiSettingsPanel() {
   const [data, setData] = useState<AiSettingsResponse | null>(null);
   const [enabled, setEnabled] = useState(true);
   const [model, setModel] = useState("");
-  const [provider, setProvider] = useState("openai-compatible");
+  const [provider, setProvider] = useState("nvidia-nim");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -33,7 +33,7 @@ export function AiSettingsPanel() {
     setMessage(null);
     try {
       const result = await api.saveAiSettings({ enabled, model: model.trim(), provider: provider.trim() });
-      setData((current) => (current ? { ...current, settings: result.settings, configured: result.configured } : current));
+      setData(result);
       setMessage("AI assistant settings saved.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not save AI settings.");
@@ -75,7 +75,8 @@ export function AiSettingsPanel() {
           <p className="flex items-start gap-2 text-[11px] leading-relaxed text-amber-100/90">
             <KeyRound className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             No AI API key is set. The chatbot shows a clear "not configured" message instead of inventing
-            answers. Add the key as a Worker secret, then deploy:
+            answers. Add the NVIDIA key in the Security Dashboard → AI configuration panel, or as a Worker
+            secret:
             <code className="ml-1 rounded bg-black/40 px-1.5 py-0.5 font-mono text-[10px] text-amber-100">
               wrangler secret put AI_API_KEY
             </code>
@@ -117,7 +118,7 @@ export function AiSettingsPanel() {
               <input
                 value={model}
                 onChange={(event) => setModel(event.target.value)}
-                placeholder={data?.envModel ?? data?.defaultModel ?? "gpt-4o-mini"}
+                placeholder={data?.envModel ?? data?.defaultModel ?? "google/gemma-4-31b-it"}
                 className={cn(inputClass, "mt-1.5 font-mono")}
               />
               <span className="mt-1 block text-[10px] text-white/30">
@@ -130,12 +131,12 @@ export function AiSettingsPanel() {
               <input
                 value={provider}
                 onChange={(event) => setProvider(event.target.value)}
-                placeholder="openai-compatible"
+                placeholder="nvidia-nim"
                 className={cn(inputClass, "mt-1.5")}
               />
               <span className="mt-1 block text-[10px] text-white/30">
-                Any OpenAI-compatible chat-completions endpoint works. Change the endpoint with the
-                AI_API_URL environment variable; no code change is required.
+                NVIDIA NIM is OpenAI-compatible. The API key, endpoint and model are managed in the Security
+                Dashboard AI configuration panel; the AI_API_URL secret remains a fallback.
               </span>
             </label>
 
@@ -149,7 +150,7 @@ export function AiSettingsPanel() {
                 onClick={() => {
                   setEnabled(data?.settings.enabled ?? true);
                   setModel(data?.settings.model ?? "");
-                  setProvider(data?.settings.provider ?? "openai-compatible");
+                  setProvider(data?.settings.provider ?? "nvidia-nim");
                 }}
                 className={buttonClass}
               >
@@ -173,7 +174,7 @@ export function AiSettingsPanel() {
             <dl className="space-y-2 text-[11px]">
               {[
                 ["AI_API_KEY", configured ? "Set (hidden)" : "Not set", configured],
-                ["AI_API_URL", data?.apiUrl ?? "default", true],
+                ["AI endpoint", data?.settings.apiUrl ?? "default", true],
                 ["AI_MODEL", data?.envModel ?? "(default)", Boolean(data?.envModel)],
                 ["AI_PROVIDER", data?.providerEnv ?? "(default)", Boolean(data?.providerEnv)],
               ].map(([name, value, ok]) => (

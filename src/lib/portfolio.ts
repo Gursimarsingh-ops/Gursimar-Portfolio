@@ -8,6 +8,10 @@ export interface PublicProject {
   category: string;
   mediaUrl: string;
   thumbUrl: string | null;
+  ratio?: string | null;
+  width?: number | null;
+  height?: number | null;
+  duration?: number | null;
   createdAt: string;
 }
 

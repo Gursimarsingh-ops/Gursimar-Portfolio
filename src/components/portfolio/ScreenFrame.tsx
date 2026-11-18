@@ -1,5 +1,8 @@
+import { useState } from "react";
+
 interface ScreenFrameProps {
-  ratio: string;
+  /** "auto" (or omitted) follows the uploaded file's real dimensions. */
+  ratio?: string;
   label: string;
   onClick?: () => void;
   variant?: "image" | "video";
@@ -18,6 +21,12 @@ export function ScreenFrame({
   posterUrl,
 }: ScreenFrameProps) {
   const media = imageUrl ?? posterUrl;
+  const [detected, setDetected] = useState<number | null>(null);
+
+  // The LED monitor takes the real aspect ratio of the uploaded asset unless a
+  // layout was pinned in the dashboard. Nothing is stretched or pre-cropped.
+  const explicit = ratio && ratio !== "auto" ? ratio.replace("/", " / ") : null;
+  const effective = explicit ?? (detected ? `${detected}` : "16 / 9");
 
   return (
     <button
@@ -30,7 +39,7 @@ export function ScreenFrame({
         <div className="rounded-xl border border-neutral-700 bg-black p-1.5">
           <div
             className="relative overflow-hidden rounded-lg bg-neutral-900"
-            style={{ aspectRatio: ratio }}
+            style={{ aspectRatio: effective }}
           >
             {media ? (
               <>
@@ -39,6 +48,10 @@ export function ScreenFrame({
                   alt={label}
                   loading="lazy"
                   decoding="async"
+                  onLoad={(event) => {
+                    const { naturalWidth, naturalHeight } = event.currentTarget;
+                    if (naturalWidth && naturalHeight) setDetected(naturalWidth / naturalHeight);
+                  }}
                   className="absolute inset-0 h-full w-full object-cover transition-transform duration-700 group-hover:scale-[1.03]"
                 />
                 <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/45 via-transparent to-transparent opacity-70" />

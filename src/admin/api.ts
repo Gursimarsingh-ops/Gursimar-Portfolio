@@ -13,6 +13,10 @@ export interface AdminProject {
   assetType: string;
   assetSize: number;
   sortOrder: number;
+  displayRatio: string;
+  assetWidth: number | null;
+  assetHeight: number | null;
+  durationSeconds: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -124,12 +128,39 @@ export interface ClientRecord {
 }
 
 export interface AiSettingsResponse {
-  settings: { enabled: boolean; model: string; provider: string; updatedAt: string | null };
+  settings: {
+    enabled: boolean;
+    model: string;
+    provider: string;
+    apiUrl: string;
+    knowledge: string;
+    updatedAt: string | null;
+    lastTestAt: string | null;
+    lastSuccessAt: string | null;
+    lastError: string | null;
+    lastLatencyMs: number | null;
+  };
   configured: boolean;
-  apiUrl: string;
+  keyHint: string | null;
+  keySource: "dashboard" | "environment" | "none";
+  model: string;
+  vision: boolean;
+  defaultModel: string;
+  defaultApiUrl: string;
+  defaultProvider: string;
   envModel: string | null;
   providerEnv: string | null;
-  defaultModel: string;
+}
+
+export interface AiTestResult {
+  ok: boolean;
+  status: number | null;
+  latencyMs: number;
+  endpoint: string;
+  model: string;
+  message: string;
+  reply?: string;
+  diagnostics?: string;
 }
 
 export interface SecurityInfo {
@@ -188,6 +219,12 @@ export interface ArtistPhoto {
   url: string;
   type: string;
   size: number;
+  updatedAt: string;
+}
+
+export interface ArtistOriginal {
+  key: string;
+  url: string;
   updatedAt: string;
 }
 
@@ -264,6 +301,10 @@ export const api = {
     assetKey: string;
     thumbKey?: string | null;
     status?: ProjectStatus;
+    displayRatio?: string;
+    assetWidth?: number | null;
+    assetHeight?: number | null;
+    durationSeconds?: number | null;
   }) =>
     request<{ project: AdminProject }>("/api/admin/projects", {
       method: "POST",
@@ -279,6 +320,10 @@ export const api = {
       status: ProjectStatus;
       thumbKey: string | null;
       assetKey: string;
+      displayRatio: string;
+      assetWidth: number | null;
+      assetHeight: number | null;
+      durationSeconds: number | null;
     }>
   ) =>
     request<{ project: AdminProject }>(`/api/admin/projects/${encodeURIComponent(id)}`, {
@@ -353,8 +398,22 @@ export const api = {
 
   aiSettings: () => request<AiSettingsResponse>("/api/admin/ai-settings"),
 
-  saveAiSettings: (payload: { enabled?: boolean; model?: string; provider?: string }) =>
-    request<{ settings: AiSettingsResponse["settings"]; configured: boolean }>("/api/admin/ai-settings", {
+  saveAiSettings: (payload: {
+    enabled?: boolean;
+    model?: string;
+    provider?: string;
+    apiUrl?: string;
+    apiKey?: string;
+    clearApiKey?: boolean;
+    knowledge?: string;
+  }) =>
+    request<AiSettingsResponse>("/api/admin/ai-settings", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  testAiConnection: (payload: { apiKey?: string; apiUrl?: string; model?: string }) =>
+    request<AiTestResult>("/api/admin/ai-settings/test", {
       method: "POST",
       body: JSON.stringify(payload),
     }),
@@ -378,12 +437,13 @@ export const api = {
       body: JSON.stringify({ scope }),
     }),
 
-  artistPhoto: () => request<{ photo: ArtistPhoto | null; warning?: string }>("/api/admin/artist"),
+  artistPhoto: () =>
+    request<{ photo: ArtistPhoto | null; original: ArtistOriginal | null; warning?: string }>("/api/admin/artist"),
 
-  setArtistPhoto: (assetKey: string) =>
-    request<{ photo: ArtistPhoto }>("/api/admin/artist", {
+  setArtistPhoto: (assetKey: string, originalKey?: string) =>
+    request<{ photo: ArtistPhoto; original: ArtistOriginal | null }>("/api/admin/artist", {
       method: "POST",
-      body: JSON.stringify({ assetKey }),
+      body: JSON.stringify({ assetKey, originalKey }),
     }),
 
   clearArtistPhoto: () => request<{ ok: boolean }>("/api/admin/artist", { method: "DELETE" }),
@@ -392,7 +452,7 @@ export const api = {
 /** Multipart upload with real progress events (fetch has no upload progress). */
 export function uploadFile(
   file: File,
-  kind: ProjectKind | "thumbnail" | "artist",
+  kind: ProjectKind | "thumbnail" | "artist" | "original",
   onProgress: (percent: number) => void
 ): Promise<UploadResult> {
   return new Promise((resolve, reject) => {

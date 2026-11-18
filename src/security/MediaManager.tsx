@@ -4,6 +4,7 @@ import {
   ArrowDown,
   ArrowUp,
   CheckCircle2,
+  Crop,
   Eye,
   EyeOff,
   Image as ImageIcon,
@@ -12,6 +13,7 @@ import {
   Pencil,
   Plus,
   Save,
+  Timer,
   Trash2,
   Upload,
   Video,
@@ -23,6 +25,20 @@ import { CATEGORY_OPTIONS, categoryLabel } from "@/admin/categories";
 import { ProjectPreviewDialog } from "@/components/portfolio/ProjectPreviewDialog";
 import { VideoPlayerDialog } from "@/components/portfolio/VideoPlayerDialog";
 import { invalidatePublishedProjects } from "@/lib/portfolio";
+import { ASPECT_OPTIONS, MediaEditor as ImageEditor, type AspectId, type EditedImage } from "./MediaEditor";
+
+const SCREEN_RATIOS = ["auto", ...ASPECT_OPTIONS.filter((option) => option.id !== "custom").map((option) => option.id.replace(":", "/"))];
+
+function ratioLabel(value: string): string {
+  return value === "auto" ? "Auto (follows the file)" : value;
+}
+
+function formatDuration(seconds: number | null): string {
+  if (!seconds || !Number.isFinite(seconds)) return "—";
+  const total = Math.round(seconds);
+  const minutes = Math.floor(total / 60);
+  return `${minutes}:${String(total % 60).padStart(2, "0")}`;
+}
 
 const IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 const VIDEO_TYPES = ["video/mp4", "video/webm", "video/quicktime"];
@@ -105,6 +121,25 @@ function MediaEditor({
   const [progress, setProgress] = useState(0);
   const [phase, setPhase] = useState<"idle" | "uploading" | "saving">("idle");
   const [error, setError] = useState<string | null>(null);
+  const [displayRatio, setDisplayRatio] = useState(project?.displayRatio ?? "auto");
+  const [assetMeta, setAssetMeta] = useState<{ width: number; height: number } | null>(
+    project?.assetWidth && project?.assetHeight
+      ? { width: project.assetWidth, height: project.assetHeight }
+      : null
+  );
+  const [videoMeta, setVideoMeta] = useState<{ width: number; height: number; duration: number } | null>(
+    project?.kind === "video" && project.durationSeconds
+      ? {
+          width: project.assetWidth ?? 0,
+          height: project.assetHeight ?? 0,
+          duration: project.durationSeconds,
+        }
+      : null
+  );
+  const [imageJob, setImageJob] = useState<{ kind: "asset" | "thumb"; file?: File; url?: string; name: string } | null>(
+    null
+  );
+  const videoRef = useRef<HTMLVideoElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const thumbInput = useRef<HTMLInputElement>(null);
 
@@ -128,6 +163,22 @@ function MediaEditor({
     return () => urls.forEach((url) => URL.revokeObjectURL(url));
   }, [thumb]);
 
+  const detectVideo = (next: File) => {
+    const url = URL.createObjectURL(next);
+    const video = document.createElement("video");
+    video.preload = "metadata";
+    video.onloadedmetadata = () => {
+      setVideoMeta({
+        width: video.videoWidth,
+        height: video.videoHeight,
+        duration: Number.isFinite(video.duration) ? video.duration : 0,
+      });
+      URL.revokeObjectURL(url);
+    };
+    video.onerror = () => URL.revokeObjectURL(url);
+    video.src = url;
+  };
+
   const pickFile = (next: File | undefined) => {
     if (!next) return;
     setError(null);
@@ -141,8 +192,17 @@ function MediaEditor({
       setError(`File is too large. Maximum size is ${formatBytes(max)}.`);
       return;
     }
-    setFile(next);
     if (!title.trim()) setTitle(next.name.replace(/\.[^.]+$/, ""));
+
+    if (isVideo) {
+      setFile(next);
+      setVideoMeta(null);
+      detectVideo(next);
+      return;
+    }
+
+    // Images and covers open the editor before anything is uploaded.
+    setImageJob({ kind: "asset", file: next, name: next.name });
   };
 
   const pickThumb = (next: File | undefined) => {
@@ -156,7 +216,49 @@ function MediaEditor({
       setError(`Cover image is too large. Maximum size is ${formatBytes(MAX_THUMB)}.`);
       return;
     }
-    setThumb(next);
+    setImageJob({ kind: "thumb", file: next, name: next.name });
+  };
+
+  const applyEditedImage = (result: EditedImage) => {
+    if (!imageJob) return;
+    if (imageJob.kind === "asset") {
+      setFile(result.file);
+      setAssetMeta({ width: result.width, height: result.height });
+    } else {
+      setThumb(result.file);
+    }
+    setImageJob(null);
+    setError(null);
+  };
+
+  /** Grab the frame currently shown in the video preview and edit it as the cover. */
+  const captureCover = () => {
+    const video = videoRef.current;
+    if (!video || !video.videoWidth) {
+      setError("Load a video first, then capture a cover frame.");
+      return;
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      setError("Cover capture is not supported in this browser.");
+      return;
+    }
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          setError("Could not capture a cover frame.");
+          return;
+        }
+        const captured = new File([blob], "video-cover.jpg", { type: "image/jpeg" });
+        setImageJob({ kind: "thumb", file: captured, name: "video-cover" });
+      },
+      "image/jpeg",
+      0.95
+    );
   };
 
   const save = async () => {
@@ -198,8 +300,13 @@ function MediaEditor({
           description: description.trim(),
           category,
           status,
+          displayRatio,
           ...(assetKey ? { assetKey } : {}),
           ...(thumbKey !== undefined ? { thumbKey } : {}),
+          ...(assetMeta ? { assetWidth: assetMeta.width, assetHeight: assetMeta.height } : {}),
+          ...(videoMeta
+            ? { assetWidth: videoMeta.width, assetHeight: videoMeta.height, durationSeconds: videoMeta.duration }
+            : {}),
         });
         onSaved(`“${title.trim()}” saved.`);
       } else {
@@ -211,6 +318,10 @@ function MediaEditor({
           assetKey: assetKey as string,
           thumbKey: thumbKey ?? null,
           status,
+          displayRatio,
+          assetWidth: videoMeta?.width ?? assetMeta?.width ?? null,
+          assetHeight: videoMeta?.height ?? assetMeta?.height ?? null,
+          durationSeconds: videoMeta?.duration ?? null,
         });
         onSaved(
           `“${title.trim()}” ${status === "published" ? "published to the public portfolio" : "saved as a draft"}.`
@@ -241,6 +352,25 @@ function MediaEditor({
         onClick={(event) => event.stopPropagation()}
       >
         <span className="pointer-events-none absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-white/40 to-transparent" />
+
+        {imageJob && (
+          <ImageEditor
+            open
+            file={imageJob.file}
+            url={imageJob.url}
+            name={imageJob.name}
+            title={imageJob.kind === "thumb" ? "Edit cover image" : "Edit graphic design"}
+            subtitle={
+              imageJob.kind === "thumb"
+                ? "The composition is saved as the video cover"
+                : "Nothing is published until you save the project after editing"
+            }
+            defaultAspect={imageJob.kind === "thumb" ? ("16:9" as AspectId) : "original"}
+            onCancel={() => setImageJob(null)}
+            onApply={applyEditedImage}
+          />
+        )}
+
         <header className="flex items-center justify-between gap-3 border-b border-white/10 px-5 py-3.5">
           <div>
             <p className="text-[9px] uppercase tracking-[0.28em] text-white/40">
@@ -268,12 +398,30 @@ function MediaEditor({
                 isVideo && (file || project) ? (
                   <video
                     key={previewSrc}
+                    ref={videoRef}
                     src={previewSrc}
                     controls
                     playsInline
                     preload="metadata"
                     poster={thumbUrl ?? project?.thumbUrl ?? undefined}
-                    className="aspect-video w-full bg-black object-contain"
+                    onLoadedMetadata={(event) => {
+                      const element = event.currentTarget;
+                      if (!element.videoWidth) return;
+                      setVideoMeta((current) =>
+                        current ?? {
+                          width: element.videoWidth,
+                          height: element.videoHeight,
+                          duration: Number.isFinite(element.duration) ? element.duration : 0,
+                        }
+                      );
+                    }}
+                    style={{
+                      aspectRatio:
+                        videoMeta && videoMeta.width && videoMeta.height
+                          ? `${videoMeta.width} / ${videoMeta.height}`
+                          : "16 / 9",
+                    }}
+                    className="max-h-64 w-full bg-black object-contain"
                   />
                 ) : (
                   <img src={previewSrc} alt="Selected media preview" className="max-h-64 w-full object-contain" />
@@ -299,14 +447,26 @@ function MediaEditor({
                 {project ? (file ? "Change file" : "Replace media") : "Choose file"}
               </button>
               {isVideo && (
-                <button
-                  type="button"
-                  onClick={() => thumbInput.current?.click()}
-                  className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-white/15 bg-white/[0.05] px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-white/70 transition-colors hover:border-white/30 hover:text-white"
-                >
-                  <ImagePlus className="h-3 w-3" />
-                  Cover
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => thumbInput.current?.click()}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-white/15 bg-white/[0.05] px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-white/70 transition-colors hover:border-white/30 hover:text-white"
+                  >
+                    <ImagePlus className="h-3 w-3" />
+                    Cover
+                  </button>
+                  <button
+                    type="button"
+                    onClick={captureCover}
+                    disabled={!previewSrc}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-white/15 bg-white/[0.05] px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-white/70 transition-colors hover:border-white/30 hover:text-white disabled:opacity-40"
+                    title="Use the current video frame as the cover"
+                  >
+                    <Crop className="h-3 w-3" />
+                    Frame
+                  </button>
+                </>
               )}
             </div>
 
@@ -336,6 +496,40 @@ function MediaEditor({
                 {file ? `${file.name} · ${formatBytes(file.size)}` : project ? `Stored · ${formatBytes(project.assetSize)}` : ""}
                 {thumb ? ` · cover ${formatBytes(thumb.size)}` : ""}
               </p>
+            )}
+
+            {isVideo && (videoMeta || project) && (
+              <div className="grid grid-cols-3 gap-1.5">
+                {[
+                  {
+                    label: "Dimensions",
+                    value:
+                      videoMeta?.width && videoMeta?.height
+                        ? `${videoMeta.width}×${videoMeta.height}`
+                        : project?.assetWidth && project?.assetHeight
+                          ? `${project.assetWidth}×${project.assetHeight}`
+                          : "—",
+                  },
+                  {
+                    label: "Aspect",
+                    value:
+                      videoMeta?.width && videoMeta?.height
+                        ? (videoMeta.width / videoMeta.height).toFixed(2)
+                        : project?.assetWidth && project?.assetHeight
+                          ? (project.assetWidth / project.assetHeight).toFixed(2)
+                          : "—",
+                  },
+                  { label: "Duration", value: formatDuration(videoMeta?.duration ?? project?.durationSeconds ?? null) },
+                ].map((item) => (
+                  <div key={item.label} className="rounded-lg border border-white/[0.08] bg-black/25 px-2 py-1.5">
+                    <p className="flex items-center gap-1 text-[7px] uppercase tracking-[0.16em] text-white/30">
+                      {item.label === "Duration" && <Timer className="h-2.5 w-2.5" />}
+                      {item.label}
+                    </p>
+                    <p className="mt-0.5 truncate text-[9.5px] text-white/70">{item.value}</p>
+                  </div>
+                ))}
+              </div>
             )}
 
             {thumbUrl && <img src={thumbUrl} alt="Cover preview" className="h-20 w-full rounded-lg object-cover" />}
@@ -369,6 +563,20 @@ function MediaEditor({
                 {categories.map((option) => (
                   <option key={option.id} value={option.id}>
                     {option.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+
+            <Field label="Screen layout" hint="Adapts to the file when set to auto">
+              <select
+                value={displayRatio}
+                onChange={(event) => setDisplayRatio(event.target.value)}
+                className={inputCls}
+              >
+                {SCREEN_RATIOS.map((ratio) => (
+                  <option key={ratio} value={ratio}>
+                    {ratioLabel(ratio)}
                   </option>
                 ))}
               </select>
@@ -596,7 +804,19 @@ export function MediaManager({ kind }: { kind: ProjectKind }) {
                       </span>
                     )
                   ) : (
-                    <img src={project.assetUrl} alt="" className="aspect-[16/10] w-full object-cover" />
+                    <img
+                      src={project.assetUrl}
+                      alt=""
+                      className="w-full object-cover"
+                      style={{
+                        aspectRatio:
+                          project.displayRatio && project.displayRatio !== "auto"
+                            ? project.displayRatio.replace("/", " / ")
+                            : project.assetWidth && project.assetHeight
+                              ? `${project.assetWidth} / ${project.assetHeight}`
+                              : "16 / 10",
+                      }}
+                    />
                   )}
                   <span className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent opacity-70 transition-opacity group-hover:opacity-95" />
                   <span className="pointer-events-none absolute inset-x-0 bottom-0 p-2.5">

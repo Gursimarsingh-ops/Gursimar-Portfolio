@@ -7,9 +7,18 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "worker:dev": "wrangler dev",
+    "dev:api": "wrangler dev --config wrangler.worker.toml --port 8787",
+    "dev:api:local": "wrangler dev --config wrangler.worker.toml --port 8787 --local",
+    "worker:dev": "wrangler dev --config wrangler.worker.toml --port 8787",
     "worker:types": "tsc -p worker/tsconfig.json --noEmit",
-    "db:local": "wrangler d1 execute portfolio-db --local --file worker/schema.sql"
+    "db:local": "wrangler d1 execute portfolio-db --local --file worker/schema.sql",
+    "db:remote": "wrangler d1 execute portfolio-db --remote --file worker/schema.sql",
+    "deploy": "npm run build && wrangler pages deploy",
+    "deploy:worker": "npm run build && wrangler deploy --config wrangler.worker.toml",
+    "pages:dev": "wrangler pages dev --port 8788",
+    "predeploy": "node scripts/check-cloudflare-config.mjs",
+    "deploy:check": "node scripts/check-cloudflare-config.mjs",
+    "migrate:cloudflare": "node scripts/migrate-to-cloudflare.mjs"
   },
   "dependencies": {
     "@react-three/fiber": "^8.16.7",
