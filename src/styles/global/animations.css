@@ -1,0 +1,523 @@
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.55; transform: scale(0.9); }
+}
+
+@keyframes slide {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+@keyframes scan {
+  0% { transform: translateX(0); }
+  50% { transform: translateX(100%); }
+  100% { transform: translateX(0); }
+}
+
+@keyframes bar {
+  0%, 100% { transform: scaleY(0.5); }
+  50% { transform: scaleY(1); }
+}
+
+@keyframes pop {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.08); opacity: 0.85; }
+}
+
+@keyframes fade {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
+@keyframes grade {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 1; }
+}
+
+@keyframes gradebar {
+  0%, 100% { width: 15%; }
+  50% { width: 85%; }
+}
+
+@keyframes pan {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes flash {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 0.35; }
+}
+
+@keyframes cursor {
+  0% { transform: translate(40px, 60px); }
+  25% { transform: translate(120px, 40px); }
+  50% { transform: translate(150px, 80px); }
+  75% { transform: translate(80px, 90px); }
+  100% { transform: translate(40px, 60px); }
+}
+
+/* ---------- shared premium interactions ---------- */
+
+@keyframes shine {
+  0% { transform: translateX(-130%) skewX(-12deg); opacity: 0; }
+  15% { opacity: 1; }
+  100% { transform: translateX(130%) skewX(-12deg); opacity: 0; }
+}
+
+@keyframes sheen {
+  0%, 100% { opacity: 0.15; transform: translateX(-10%); }
+  50% { opacity: 0.45; transform: translateX(10%); }
+}
+
+/* ---------- skills: miniature production scenes ---------- */
+
+@keyframes gesture-a {
+  0%, 100% { transform: rotate(6deg); }
+  50% { transform: rotate(-24deg); }
+}
+
+@keyframes gesture-b {
+  0%, 100% { transform: rotate(-18deg); }
+  50% { transform: rotate(8deg); }
+}
+
+/* Forearm follows the upper arm with a one-beat lag, so elbows stay hinged. */
+@keyframes gesture-fore-a {
+  0%, 100% { transform: rotate(26deg); }
+  50% { transform: rotate(-16deg); }
+}
+
+@keyframes gesture-fore-b {
+  0%, 100% { transform: rotate(-12deg); }
+  50% { transform: rotate(18deg); }
+}
+
+/* Barely-there breathing and weight shift for the miniature presenters. */
+@keyframes presenter-breathe {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50% { transform: translateY(-1px) rotate(-0.8deg); }
+}
+
+@keyframes porch-light {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
+@keyframes nod {
+  0%, 100% { transform: rotate(-2deg) translateY(0); }
+  50% { transform: rotate(3deg) translateY(-1px); }
+}
+
+@keyframes talk {
+  0%, 100% { transform: scaleX(1); }
+  50% { transform: scaleX(1.35); }
+}
+
+@keyframes draw {
+  0% { stroke-dashoffset: 320; }
+  60%, 100% { stroke-dashoffset: 0; }
+}
+
+@keyframes rise {
+  0% { transform: scaleY(0.2); transform-origin: bottom; }
+  60%, 100% { transform: scaleY(1); transform-origin: bottom; }
+}
+
+@keyframes drift {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-5px); }
+}
+
+@keyframes drift-slow {
+  0%, 100% { transform: translateY(0) translateX(0); }
+  50% { transform: translateY(-4px) translateX(3px); }
+}
+
+@keyframes card-in {
+  0% { transform: translateY(10px) scale(0.96); opacity: 0; }
+  55%, 100% { transform: translateY(0) scale(1); opacity: 1; }
+}
+
+@keyframes board-line {
+  0% { stroke-dashoffset: 260; }
+  70%, 100% { stroke-dashoffset: 0; }
+}
+
+@keyframes wipe {
+  0% { transform: scaleX(0); transform-origin: left; }
+  55%, 100% { transform: scaleX(1); transform-origin: left; }
+}
+
+@keyframes playhead {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(150px); }
+}
+
+@keyframes marquee-ants {
+  to { stroke-dashoffset: -16; }
+}
+
+@keyframes clip-in {
+  0% { transform: translateX(-14px); opacity: 0; }
+  40%, 100% { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes wheel {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes keyframe-move {
+  0%, 100% { transform: translate(0, 0); }
+  50% { transform: translate(26px, -12px); }
+}
+
+@keyframes sweep {
+  0% { left: 6%; }
+  100% { left: 92%; }
+}
+
+@keyframes morph {
+  0%, 100% { border-radius: 8px; transform: rotate(0deg) scale(1); }
+  50% { border-radius: 50%; transform: rotate(18deg) scale(1.12); }
+}
+
+/* ---------- editing workflow scenes ---------- */
+
+@keyframes trim {
+  0%, 15% { width: 24%; }
+  55%, 100% { width: 40%; }
+}
+
+@keyframes ripple-move {
+  0%, 30% { transform: translateX(0); }
+  55%, 100% { transform: translateX(-11px); }
+}
+
+@keyframes cut-away {
+  0%, 26% { transform: scaleX(1); opacity: 1; }
+  40%, 100% { transform: scaleX(0); opacity: 0; }
+}
+
+@keyframes logo-a {
+  0%, 22% { opacity: 1; transform: scale(1) rotate(0deg); }
+  34%, 100% { opacity: 0; transform: scale(0.6) rotate(90deg); }
+}
+
+@keyframes logo-b {
+  0%, 24% { opacity: 0; transform: scale(0.6) rotate(-90deg); }
+  38%, 52% { opacity: 1; transform: scale(1) rotate(0deg); }
+  64%, 100% { opacity: 0; transform: scale(0.6) rotate(45deg); }
+}
+
+@keyframes logo-final {
+  0%, 58% { opacity: 0; transform: scale(0.7); }
+  72%, 100% { opacity: 1; transform: scale(1); }
+}
+
+@keyframes grade-sweep {
+  0%, 10% { clip-path: inset(0 100% 0 0); }
+  55%, 92% { clip-path: inset(0 0 0 0); }
+  100% { clip-path: inset(0 100% 0 0); }
+}
+
+@keyframes divider-sweep {
+  0%, 10% { left: 18%; }
+  55%, 92% { left: 82%; }
+  100% { left: 18%; }
+}
+
+@keyframes flicker {
+  0%, 100% { opacity: 0.55; }
+  45% { opacity: 1; }
+  47% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
+@keyframes badge-pop {
+  0% { transform: scale(0.6); opacity: 0; }
+  60% { transform: scale(1.08); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes stage-glow {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 0.85; }
+}
+
+@keyframes pipeline-fill {
+  0% { width: 0; }
+  100% { width: 100%; }
+}
+
+/* Travelling highlight along the five-stage pipeline */
+@keyframes rail-travel {
+  0% { left: 0; opacity: 0; }
+  12% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { left: 100%; opacity: 0; }
+}
+
+/* Slow atmospheric drift used by the footer lighting */
+@keyframes footer-drift {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); opacity: 0.55; }
+  50% { transform: translate3d(18px, -14px, 0) scale(1.12); opacity: 0.85; }
+}
+
+/* ---------- studio atmosphere ---------- */
+
+@keyframes studio-breathe {
+  0%, 100% { opacity: 0.55; transform: translateX(-50%) scale(1); }
+  50% { opacity: 1; transform: translateX(-50%) scale(1.04); }
+}
+
+@keyframes mote-drift {
+  0%, 100% { transform: translate3d(0, 0, 0); opacity: 0.15; }
+  50% { transform: translate3d(10px, -22px, 0); opacity: 0.7; }
+}
+
+@keyframes contact-orb {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); opacity: 0.65; }
+  50% { transform: translate3d(24px, -18px, 0) scale(1.08); opacity: 0.9; }
+}
+
+/* ---------- chat interfaces ---------- */
+
+@keyframes chat-panel-in {
+  0% { opacity: 0; transform: translateY(14px) scale(0.975); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes chat-panel-out {
+  0% { opacity: 1; transform: translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateY(10px) scale(0.98); }
+}
+
+@keyframes chat-bubble-in {
+  0% { opacity: 0; transform: translateY(6px) scale(0.985); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.chat-panel-in { animation: chat-panel-in 240ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+.chat-panel-out { animation: chat-panel-out 190ms ease-in both; pointer-events: none; }
+.chat-bubble-in { animation: chat-bubble-in 220ms ease-out both; }
+
+@keyframes frame-cycle {
+  0%, 20% { opacity: 1; }
+  24%, 96% { opacity: 0; }
+  100% { opacity: 1; }
+}
+
+@keyframes frame-swap {
+  0%, 22% { opacity: 1; }
+  28%, 100% { opacity: 0; }
+}
+
+/* ---------- security facility ---------- */
+
+@keyframes guard-idle {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50% { transform: translateY(-2px) rotate(-0.35deg); }
+}
+
+@keyframes guard-breathe {
+  0%, 100% { transform: scaleY(1); }
+  50% { transform: scaleY(1.012); }
+}
+
+@keyframes guard-arm-left {
+  0%, 100% { transform: rotate(0deg); }
+  50% { transform: rotate(-1.6deg); }
+}
+
+@keyframes guard-arm-right {
+  0%, 100% { transform: rotate(0deg); }
+  50% { transform: rotate(1.4deg); }
+}
+
+@keyframes guard-scan {
+  0%, 100% { transform: rotate(-2.4deg); }
+  50% { transform: rotate(2.4deg); }
+}
+
+@keyframes guard-scanner {
+  0% { transform: translateX(-8px); opacity: 0; }
+  15% { opacity: 0.3; }
+  85% { opacity: 0.3; }
+  100% { transform: translateX(54px); opacity: 0; }
+}
+
+/* ---------- upgraded guard: blinking, baton sway, hand idle ---------- */
+
+@keyframes guard-blink {
+  0%, 92.5%, 100% { transform: scaleY(1); }
+  94%, 96.4% { transform: scaleY(0.06); }
+}
+
+@keyframes guard-baton-sway {
+  0%, 100% { transform: rotate(0deg); }
+  35% { transform: rotate(2.6deg); }
+  70% { transform: rotate(-1.2deg); }
+}
+
+@keyframes guard-hand-idle {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50% { transform: translateY(-0.7px) rotate(1.6deg); }
+}
+
+@keyframes guard-led {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
+@keyframes guard-visor-glint {
+  0%, 74%, 100% { opacity: 0; transform: translateX(-14px); }
+  80% { opacity: 0.5; }
+  90% { opacity: 0; transform: translateX(46px); }
+}
+
+@keyframes guard-scan-pause {
+  0%, 100% { transform: rotate(-2.2deg); }
+  18% { transform: rotate(2.4deg); }
+  36% { transform: rotate(2.4deg); }
+  54% { transform: rotate(-1.4deg); }
+  72% { transform: rotate(0deg); }
+}
+
+/* ---------- strong room sirens ---------- */
+
+@keyframes siren-sweep {
+  0% { transform: translateX(-140%) skewX(-14deg); opacity: 0; }
+  18% { opacity: 0.55; }
+  82% { opacity: 0.55; }
+  100% { transform: translateX(140%) skewX(-14deg); opacity: 0; }
+}
+
+@keyframes siren-pulse {
+  0%, 100% { opacity: 0.22; }
+  50% { opacity: 0.68; }
+}
+
+@keyframes siren-rotate {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes siren-wash {
+  0%, 100% { opacity: 0.32; }
+  50% { opacity: 0.6; }
+}
+
+/* ---------- system health ---------- */
+
+@keyframes health-ring {
+  0% { transform: scale(0.75); opacity: 0.7; }
+  70% { transform: scale(1.65); opacity: 0; }
+  100% { transform: scale(1.65); opacity: 0; }
+}
+
+@keyframes health-bar {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
+}
+
+@keyframes vault-wheel-turn {
+  0% { transform: rotate(0deg); }
+  55% { transform: rotate(540deg); }
+  100% { transform: rotate(720deg); }
+}
+
+@keyframes vault-led {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
+@keyframes vault-status-sweep {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(220%); }
+}
+
+/* ---------- cycling glass navigation ---------- */
+
+@keyframes nav-glass-dark {
+  0%, 12% { opacity: 0; }
+  46%, 54% { opacity: 1; }
+  88%, 100% { opacity: 0; }
+}
+
+@keyframes nav-glass-light {
+  0%, 12% { opacity: 1; }
+  46%, 54% { opacity: 0; }
+  88%, 100% { opacity: 1; }
+}
+
+@keyframes nav-ink {
+  0%, 12% { color: #1c1917; }
+  46%, 54% { color: #fafaf9; }
+  88%, 100% { color: #1c1917; }
+}
+
+@keyframes nav-pill-tone {
+  0%, 12% { background-color: rgba(255, 255, 255, 0.55); border-color: rgba(28, 25, 23, 0.16); }
+  46%, 54% { background-color: rgba(255, 255, 255, 0.07); border-color: rgba(255, 255, 255, 0.2); }
+  88%, 100% { background-color: rgba(255, 255, 255, 0.55); border-color: rgba(28, 25, 23, 0.16); }
+}
+
+@keyframes nav-cta-tone {
+  0%, 12% { background-color: #171717; border-color: #171717; color: #ffffff; }
+  46%, 54% { background-color: #ffffff; border-color: rgba(255, 255, 255, 0.85); color: #0a0a0a; }
+  88%, 100% { background-color: #171717; border-color: #171717; color: #ffffff; }
+}
+
+@keyframes nav-chip-tone {
+  0%, 12% { background-color: #171717; border-color: rgba(28, 25, 23, 0.25); color: #ffffff; }
+  46%, 54% { background-color: rgba(255, 255, 255, 0.94); border-color: rgba(255, 255, 255, 0.55); color: #0a0a0a; }
+  88%, 100% { background-color: #171717; border-color: rgba(28, 25, 23, 0.25); color: #ffffff; }
+}
+
+.nav-cycle-dark { animation: nav-glass-dark 34s ease-in-out infinite; }
+.nav-cycle-light { animation: nav-glass-light 34s ease-in-out infinite; }
+.nav-ink { animation: nav-ink 34s ease-in-out infinite; }
+.nav-pill-tone { animation: nav-pill-tone 34s ease-in-out infinite; }
+.nav-cta-tone { animation: nav-cta-tone 34s ease-in-out infinite; }
+.nav-chip-tone { animation: nav-chip-tone 34s ease-in-out infinite; }
+
+/* ---------- full-screen maintenance ---------- */
+
+@keyframes maintenance-drift {
+  0%, 100% { transform: translate3d(-3%, -2%, 0) scale(1); opacity: 0.55; }
+  50% { transform: translate3d(4%, 3%, 0) scale(1.12); opacity: 0.85; }
+}
+
+@keyframes maintenance-rise {
+  0% { opacity: 0; transform: translateY(18px) scale(0.985); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.maintenance-rise {
+  animation: maintenance-rise 0.9s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Pause decorative animations until their card is explored. */
+.anim-paused,
+.anim-paused * {
+  animation-play-state: paused !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

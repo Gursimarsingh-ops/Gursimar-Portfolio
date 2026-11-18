@@ -1,0 +1,11 @@
+# Copy to .dev.vars (git-ignored) for local Worker development.
+# Generate the hash with: node scripts/hash-admin-password.mjs "<password>"
+ADMIN_EMAIL=gursimarsingh9390@gmail.com
+ADMIN_PASSWORD_HASH=pbkdf2:100000:replace:me
+
+# AI assistant (server-side only). Use any OpenAI-compatible chat-completions endpoint.
+# AI_API_URL defaults to https://api.openai.com/v1/chat/completions
+AI_API_URL=https://api.openai.com/v1/chat/completions
+AI_API_KEY=
+AI_MODEL=gpt-4o-mini
+AI_PROVIDER=openai-compatible

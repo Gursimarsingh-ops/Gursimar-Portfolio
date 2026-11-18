@@ -1,0 +1,38 @@
+import { SKILLS } from "@/data/skills";
+import { SkillCard } from "@/components/skills/SkillCard";
+import { SkillAnimation } from "@/components/skills/SkillAnimation";
+
+export function Skills() {
+  return (
+    <section id="skills" className="relative border-t border-neutral-200 bg-white py-24">
+      <div className="mx-auto max-w-6xl px-6">
+        <div className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
+          <div>
+            <p className="text-[11px] uppercase tracking-[0.24em] text-neutral-500">
+              Capabilities
+            </p>
+            <h2 className="mt-3 font-serif text-4xl tracking-tight text-neutral-950 md:text-5xl">
+              Skills &amp; Services
+            </h2>
+          </div>
+          <p className="max-w-sm text-sm leading-relaxed text-neutral-500">
+            Nine disciplines, each with its own animated demonstration. Hover or
+            tap a card to activate.
+          </p>
+        </div>
+
+        <div className="mt-14 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+          {SKILLS.map((s, i) => (
+            <SkillCard
+              key={s.id}
+              index={i + 1}
+              title={s.title}
+              desc={s.desc}
+              animation={<SkillAnimation kind={s.id} />}
+            />
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}

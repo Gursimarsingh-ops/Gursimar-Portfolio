@@ -1,0 +1,44 @@
+.studio-ambient {
+  animation: studioAmbient 7s ease-in-out infinite;
+}
+
+.studio-lamp-a {
+  animation: studioLamp 5s ease-in-out infinite;
+}
+
+.studio-lamp-b {
+  animation: studioLamp 6.5s ease-in-out infinite 0.8s;
+}
+
+.studio-bulb-a {
+  animation: studioBulb 4s ease-in-out infinite;
+}
+
+.studio-bulb-b {
+  animation: studioBulb 5.5s ease-in-out infinite 1.2s;
+}
+
+@keyframes studioAmbient {
+  0%, 100% { opacity: 0.35; transform: translate(-50%, -50%) scale(1); }
+  50% { opacity: 0.6; transform: translate(-50%, -50%) scale(1.06); }
+}
+
+@keyframes studioLamp {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.75; }
+}
+
+@keyframes studioBulb {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .studio-ambient,
+  .studio-lamp-a,
+  .studio-lamp-b,
+  .studio-bulb-a,
+  .studio-bulb-b {
+    animation: none;
+  }
+}
