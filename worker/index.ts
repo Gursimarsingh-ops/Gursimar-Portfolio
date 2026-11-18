@@ -12,6 +12,7 @@ import {
   verifyPassword,
 } from "./auth";
 import { aiRuntime, handlePortalApi } from "./portal";
+import { ensureSchema } from "./schema";
 
 export interface Env {
   DB: D1Database;
@@ -295,6 +296,7 @@ async function publicMedia(env: Env, key: string): Promise<Response> {
 }
 
 async function serveObject(env: Env, key: string, isPrivate: boolean): Promise<Response> {
+  if (!env.FILES) return new Response("File storage is not configured", { status: 503 });
   const object = await env.FILES.get(key);
   if (!object) return new Response("Not found", { status: 404 });
 
@@ -343,7 +345,19 @@ async function login(request: Request, env: Env): Promise<Response> {
   }
 
   clearFailures(key);
-  const cookie = await createSession(env, request);
+
+  let cookie: string;
+  try {
+    cookie = await createSession(env, request);
+  } catch (error) {
+    // A failed session write must never surface as an opaque 500 after a
+    // password has already been accepted.
+    console.error("Session creation failed", error instanceof Error ? error.message : String(error));
+    return fail(
+      "Signed in, but the session could not be stored. The D1 database is not accepting writes — check the DB binding in Cloudflare Pages → Settings → Functions → Bindings.",
+      503
+    );
+  }
   return json(
     { authenticated: true, email: expectedEmail },
     200,
@@ -706,6 +720,10 @@ async function deleteProject(env: Env, id: string): Promise<Response> {
 /* --------------------------------- uploads -------------------------------- */
 
 async function upload(request: Request, env: Env): Promise<Response> {
+  if (!env.FILES) {
+    return fail("File storage (R2 binding FILES) is not configured on this deployment.", 503);
+  }
+
   const contentType = request.headers.get("Content-Type") ?? "";
   if (!contentType.includes("multipart/form-data")) {
     return fail("Uploads must use multipart/form-data.", 415);
@@ -858,9 +876,9 @@ async function stats(env: Env): Promise<Response> {
 }
 
 async function status(env: Env): Promise<Response> {
-  let storageOk = true;
+  let storageOk = Boolean(env.FILES);
   try {
-    await env.FILES.list({ limit: 1 });
+    if (env.FILES) await env.FILES.list({ limit: 1 });
   } catch {
     storageOk = false;
   }
@@ -1310,6 +1328,26 @@ export async function handleBackendRequest(request: Request, env: Env): Promise<
 
   try {
     if (url.pathname.startsWith("/api/")) {
+      if (!env.DB) {
+        return json(
+          {
+            error:
+              "The backend has no D1 database bound. In Cloudflare Pages → Settings → Functions → Bindings add DB (D1 database portfolio-db), then redeploy.",
+          },
+          503
+        );
+      }
+      // Create missing tables before routing so a fresh database can still sign
+      // in instead of failing with "no such table: sessions" (HTTP 500).
+      if (!(await ensureSchema(env))) {
+        return json(
+          {
+            error:
+              "The D1 database is unreachable or its schema could not be created. Verify the DB binding in Cloudflare Pages → Settings → Functions → Bindings.",
+          },
+          503
+        );
+      }
       return await handleApi(request, env, url);
     }
 

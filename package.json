@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prebuild": "node scripts/build-schema.mjs",
     "build": "tsc && vite build",
+    "schema:build": "node scripts/build-schema.mjs",
     "preview": "vite preview",
     "dev:api": "wrangler dev --config wrangler.worker.toml --port 8787",
     "dev:api:local": "wrangler dev --config wrangler.worker.toml --port 8787 --local",
