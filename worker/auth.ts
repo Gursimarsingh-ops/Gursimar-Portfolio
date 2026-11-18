@@ -1,5 +1,6 @@
 export interface AuthEnv {
-  DB: D1Database;
+  /** Absent when the Pages project has no D1 binding yet. */
+  DB?: D1Database;
   ADMIN_EMAIL?: string;
   ADMIN_PASSWORD_HASH?: string;
 }
@@ -95,21 +96,75 @@ export function isConfigured(env: AuthEnv): boolean {
   return Boolean(env.ADMIN_EMAIL?.trim() && stored && stored.split(stored.includes(":") ? ":" : "$").length === 4);
 }
 
+const SIGNED_PREFIX = "v1";
+
+async function hmacHex(secret: string, message: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(message));
+  return [...new Uint8Array(signature)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * Stateless fallback token: `v1.<expiry>.<hmac>` signed with the admin
+ * password hash (which never leaves the Worker). Used only when the session
+ * table cannot be written, so a verified administrator still gets in on a
+ * deployment whose D1 binding is missing or unhealthy.
+ */
+async function signedToken(env: AuthEnv, expiresAt: number): Promise<string | null> {
+  const secret = env.ADMIN_PASSWORD_HASH?.trim();
+  if (!secret) return null;
+  const payload = `${SIGNED_PREFIX}.${expiresAt}`;
+  return `${payload}.${await hmacHex(secret, payload)}`;
+}
+
+async function verifySignedToken(env: AuthEnv, token: string): Promise<boolean> {
+  const parts = token.split(".");
+  if (parts.length !== 3 || parts[0] !== SIGNED_PREFIX) return false;
+  const expiresAt = Number(parts[1]);
+  if (!Number.isFinite(expiresAt) || Date.now() > expiresAt) return false;
+  const secret = env.ADMIN_PASSWORD_HASH?.trim();
+  if (!secret) return false;
+  const expected = await hmacHex(secret, `${SIGNED_PREFIX}.${parts[1]}`);
+  return timingSafeEqual(encoder.encode(expected), encoder.encode(parts[2]));
+}
+
 export async function createSession(env: AuthEnv, request: Request): Promise<string> {
-  const tokenBytes = new Uint8Array(32);
-  crypto.getRandomValues(tokenBytes);
-  const token = bytesToBase64Url(tokenBytes);
-  const tokenHash = await sha256Hex(token);
   const now = Date.now();
+  const expiresAt = now + SESSION_TTL_SECONDS * 1000;
+  let token: string | null = null;
 
-  await env.DB.prepare(
-    "INSERT INTO sessions (token_hash, created_at, expires_at) VALUES (?, ?, ?)"
-  )
-    .bind(tokenHash, new Date(now).toISOString(), new Date(now + SESSION_TTL_SECONDS * 1000).toISOString())
-    .run();
+  // Preferred: an opaque session row that the dashboard can revoke.
+  try {
+    const tokenBytes = new Uint8Array(32);
+    crypto.getRandomValues(tokenBytes);
+    const random = bytesToBase64Url(tokenBytes);
+    const tokenHash = await sha256Hex(random);
 
-  // Opportunistic cleanup so expired rows do not accumulate.
-  await env.DB.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(new Date(now).toISOString()).run();
+    await env.DB!.prepare(
+      "INSERT INTO sessions (token_hash, created_at, expires_at) VALUES (?, ?, ?)"
+    )
+      .bind(tokenHash, new Date(now).toISOString(), new Date(expiresAt).toISOString())
+      .run();
+
+    // Opportunistic cleanup so expired rows do not accumulate.
+    await env.DB!.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(new Date(now).toISOString()).run();
+    token = random;
+  } catch (error) {
+    // Never turn this into an HTTP 500 after the password was already accepted.
+    console.error(
+      "Session store unavailable; issuing a signed session cookie:",
+      error instanceof Error ? error.message : String(error)
+    );
+    token = await signedToken(env, expiresAt);
+  }
+
+  if (!token) throw new Error("No session secret available");
 
   const secure = new URL(request.url).protocol === "https:";
   return [
@@ -132,21 +187,39 @@ export async function getSession(env: AuthEnv, request: Request): Promise<boolea
   const token = parseCookies(request.headers.get("Cookie"))[SESSION_COOKIE];
   if (!token) return false;
 
-  const tokenHash = await sha256Hex(token);
-  const row = await env.DB.prepare(
-    "SELECT token_hash FROM sessions WHERE token_hash = ? AND expires_at > ?"
-  )
-    .bind(tokenHash, new Date().toISOString())
-    .first<{ token_hash: string }>();
+  // Signed fallback cookies are verified without touching the database.
+  if (token.startsWith(`${SIGNED_PREFIX}.`)) return verifySignedToken(env, token);
 
-  return Boolean(row);
+  try {
+    const tokenHash = await sha256Hex(token);
+    const row = await env.DB!.prepare(
+      "SELECT token_hash FROM sessions WHERE token_hash = ? AND expires_at > ?"
+    )
+      .bind(tokenHash, new Date().toISOString())
+      .first<{ token_hash: string }>();
+
+    return Boolean(row);
+  } catch (error) {
+    console.error(
+      "Session lookup failed:",
+      error instanceof Error ? error.message : String(error)
+    );
+    return false;
+  }
 }
 
 export async function destroySession(env: AuthEnv, request: Request): Promise<void> {
   const token = parseCookies(request.headers.get("Cookie"))[SESSION_COOKIE];
-  if (!token) return;
-  const tokenHash = await sha256Hex(token);
-  await env.DB.prepare("DELETE FROM sessions WHERE token_hash = ?").bind(tokenHash).run();
+  if (!token || token.startsWith(`${SIGNED_PREFIX}.`)) return;
+  try {
+    const tokenHash = await sha256Hex(token);
+    await env.DB!.prepare("DELETE FROM sessions WHERE token_hash = ?").bind(tokenHash).run();
+  } catch (error) {
+    console.error(
+      "Session revoke failed:",
+      error instanceof Error ? error.message : String(error)
+    );
+  }
 }
 
 /* --------------------------- login rate limiting --------------------------- */

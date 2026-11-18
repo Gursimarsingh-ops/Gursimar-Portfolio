@@ -1328,26 +1328,38 @@ export async function handleBackendRequest(request: Request, env: Env): Promise<
 
   try {
     if (url.pathname.startsWith("/api/")) {
+      // Sign-in must work even on a deployment whose database is missing or
+      // unhealthy: the password is verified from secrets and the fallback
+      // session cookie is signed, so there is no reason to block it.
+      const authRoute =
+        url.pathname === `${ADMIN}/login` ||
+        url.pathname === `${ADMIN}/session` ||
+        url.pathname === `${ADMIN}/logout`;
+
       if (!env.DB) {
-        return json(
-          {
-            error:
-              "The backend has no D1 database bound. In Cloudflare Pages → Settings → Functions → Bindings add DB (D1 database portfolio-db), then redeploy.",
-          },
-          503
-        );
+        if (!authRoute) {
+          return json(
+            {
+              error:
+                "The backend has no D1 database bound. In Cloudflare Pages → Settings → Functions → Bindings add DB (D1 database portfolio-db), then redeploy.",
+            },
+            503
+          );
+        }
+      } else if (!(await ensureSchema(env))) {
+        // Create missing tables before routing so a fresh database can still
+        // sign in instead of failing with "no such table: sessions" (HTTP 500).
+        if (!authRoute) {
+          return json(
+            {
+              error:
+                "The D1 database is unreachable or its schema could not be created. Verify the DB binding in Cloudflare Pages → Settings → Functions → Bindings.",
+            },
+            503
+          );
+        }
       }
-      // Create missing tables before routing so a fresh database can still sign
-      // in instead of failing with "no such table: sessions" (HTTP 500).
-      if (!(await ensureSchema(env))) {
-        return json(
-          {
-            error:
-              "The D1 database is unreachable or its schema could not be created. Verify the DB binding in Cloudflare Pages → Settings → Functions → Bindings.",
-          },
-          503
-        );
-      }
+
       return await handleApi(request, env, url);
     }
 
