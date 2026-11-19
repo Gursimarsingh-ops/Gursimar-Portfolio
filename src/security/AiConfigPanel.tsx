@@ -431,12 +431,12 @@ export function AiConfigPanel() {
             <input
               value={model}
               onChange={(event) => setModel(event.target.value)}
-              placeholder={data?.defaultModel ?? "minimax-m3.1-flash"}
+              placeholder={data?.defaultModel ?? "minimaxai/minimax-m3.1-flash"}
               spellCheck={false}
               className={cn(inputCls, "font-mono")}
             />
             <span className="mt-1 block text-[9px] leading-relaxed text-white/25">
-              Default: <span className="font-mono">minimax-m3.1-flash</span> (NVIDIA NIM, multimodal).
+              Default: <span className="font-mono">minimaxai/minimax-m3.1-flash</span> (NVIDIA NIM, multimodal).
               The model name is free-form — any chat model available on the configured NIM endpoint can be
               entered here without a code change.
             </span>

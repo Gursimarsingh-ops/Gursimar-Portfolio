@@ -289,8 +289,13 @@ async function readAiSettings(env: PortalEnv): Promise<AiSettings> {
   };
 }
 
-/** Placeholder models from the earlier OpenAI-compatible setup. */
-const LEGACY_AI_MODELS = new Set(["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini"]);
+/**
+ * Models that must never be sent to the provider: the earlier OpenAI-compatible
+ * placeholders, and "minimax-m3.1-flash" without its NVIDIA vendor prefix (that
+ * id answers 404 on integrate.api.nvidia.com). Stored values matching these fall
+ * back to AI_DEFAULT_MODEL.
+ */
+const LEGACY_AI_MODELS = new Set(["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "minimax-m3.1-flash"]);
 
 /* The dashboard key lives in D1 and an environment secret can act as a fallback. */
 function aiApiKey(env: PortalEnv, settings: AiSettings): string {

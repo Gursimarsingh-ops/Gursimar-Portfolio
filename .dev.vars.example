@@ -10,7 +10,7 @@ ADMIN_PASSWORD_HASH=pbkdf2:100000:replace:me
 # `wrangler secret put AI_API_KEY` (Pages: Settings → Variables and Secrets).
 AI_API_URL=https://integrate.api.nvidia.com/v1/chat/completions
 AI_API_KEY=
-AI_MODEL=minimax-m3.1-flash
+AI_MODEL=minimaxai/minimax-m3.1-flash
 AI_PROVIDER=nvidia-nim
 
 # Optional. Only needed when the Vite dev server proxies straight to the

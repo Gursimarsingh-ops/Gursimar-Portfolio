@@ -60,7 +60,7 @@ Plain Worker variables / bindings:
 | Name | Default | Notes |
 | --- | --- | --- |
 | `AI_API_URL` | `https://integrate.api.nvidia.com/v1/chat/completions` | Any OpenAI-compatible endpoint. |
-| `AI_MODEL` | `minimax-m3.1-flash` | Overridable per deployment from AI configuration. |
+| `AI_MODEL` | `minimaxai/minimax-m3.1-flash` | NVIDIA NIM model id (vendor prefix required). Overridable per deployment from AI configuration. |
 | `AI_PROVIDER` | `nvidia-nim` | Label only; shown in the dashboard. |
 | `DB` | `wrangler.toml` D1 binding | All relational data. |
 | `B2_BUCKET_NAME` | `gursimar-portfolio` | Private B2 bucket (S3-compatible API). |
