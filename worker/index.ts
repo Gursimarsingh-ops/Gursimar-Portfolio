@@ -32,10 +32,10 @@ import {
   uploadPart,
   type StoredObject,
 } from "./storage";
+import { parseVideoSourceUrl } from "./video";
 
 export interface Env {
   DB: D1Database;
-  FILES: R2Bucket;
   /** Only present on the standalone Worker deploy; Pages serves the SPA itself. */
   ASSETS?: Fetcher;
   ADMIN_EMAIL?: string;
@@ -130,6 +130,10 @@ type ProjectRow = {
   asset_width?: number | null;
   asset_height?: number | null;
   duration_seconds?: number | null;
+  /** Externally hosted video (YouTube/Vimeo/direct file); null for uploaded media. */
+  source_url?: string | null;
+  /** JSON crop/filter presentation for the thumbnail. */
+  thumb_style?: string | null;
 };
 
 /** Screen layouts that can be pinned from the dashboard ("auto" follows the file). */
@@ -145,6 +149,7 @@ const DISPLAY_RATIOS = new Set([
   "16/9",
   "9/16",
   "16/10",
+  "21/9",
 ]);
 
 /**
@@ -163,6 +168,8 @@ function ensureSortOrder(env: Env): Promise<void> {
         ["asset_width", "ALTER TABLE projects ADD COLUMN asset_width INTEGER"],
         ["asset_height", "ALTER TABLE projects ADD COLUMN asset_height INTEGER"],
         ["duration_seconds", "ALTER TABLE projects ADD COLUMN duration_seconds REAL"],
+        ["source_url", "ALTER TABLE projects ADD COLUMN source_url TEXT"],
+        ["thumb_style", "ALTER TABLE projects ADD COLUMN thumb_style TEXT"],
       ];
       for (const [name, sql] of columns) {
         if (!has.has(name)) await env.DB.prepare(sql).run();
@@ -247,15 +254,28 @@ async function readJson<T>(request: Request): Promise<T | null> {
   }
 }
 
+function parseStoredStyle(raw: string | null | undefined): Record<string, unknown> | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
 function toPublicProject(row: ProjectRow) {
+  const link = Boolean(row.source_url);
   return {
     id: row.id,
     kind: row.kind,
     title: row.title,
     description: row.description,
     category: row.category,
-    mediaUrl: `/media/${row.asset_key}`,
+    mediaUrl: link ? row.source_url : `/media/${row.asset_key}`,
     thumbUrl: row.thumb_key ? `/media/${row.thumb_key}` : null,
+    sourceUrl: row.source_url ?? null,
+    thumbStyle: parseStoredStyle(row.thumb_style),
     ratio: row.display_ratio ?? null,
     width: row.asset_width ?? null,
     height: row.asset_height ?? null,
@@ -265,6 +285,7 @@ function toPublicProject(row: ProjectRow) {
 }
 
 function toAdminProject(row: ProjectRow) {
+  const link = Boolean(row.source_url);
   return {
     id: row.id,
     kind: row.kind,
@@ -272,10 +293,12 @@ function toAdminProject(row: ProjectRow) {
     description: row.description,
     category: row.category,
     status: row.status,
-    assetUrl: `${ADMIN}/media/${row.asset_key}`,
+    assetUrl: link ? row.source_url : `${ADMIN}/media/${row.asset_key}`,
     thumbUrl: row.thumb_key ? `${ADMIN}/media/${row.thumb_key}` : null,
     assetType: row.asset_type,
     assetSize: row.asset_size,
+    sourceUrl: row.source_url ?? null,
+    thumbStyle: parseStoredStyle(row.thumb_style),
     sortOrder: row.sort_order ?? 0,
     displayRatio: row.display_ratio ?? "auto",
     assetWidth: row.asset_width ?? null,
@@ -289,7 +312,44 @@ function toAdminProject(row: ProjectRow) {
 function readRatio(value: unknown, fallback: string | null): string | null {
   if (value === undefined) return fallback;
   if (typeof value !== "string") return fallback;
-  return DISPLAY_RATIOS.has(value) ? value : fallback;
+  const trimmed = value.trim();
+  if (DISPLAY_RATIOS.has(trimmed)) return trimmed;
+  // Custom dimensions arrive as "w/h" and must produce a sane screen shape.
+  const match = trimmed.match(/^([1-9]\d{0,4})\/([1-9]\d{0,4})$/);
+  if (match) {
+    const ratio = Number(match[1]) / Number(match[2]);
+    if (ratio >= 0.2 && ratio <= 5) return `${match[1]}/${match[2]}`;
+  }
+  return fallback;
+}
+
+function readThumbStyle(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== "object") return null;
+  const input = value as Record<string, unknown>;
+  const number = (key: string, min: number, max: number, fallback: number): number => {
+    const raw = input[key];
+    if (typeof raw !== "number" || !Number.isFinite(raw)) return fallback;
+    return Math.min(Math.max(raw, min), max);
+  };
+  const presets = ["original", "cinematic", "vivid", "mono", "warm", "cool"];
+  const preset = typeof input.preset === "string" && presets.includes(input.preset) ? input.preset : "original";
+  return JSON.stringify({
+    zoom: Number(number("zoom", 1, 3, 1).toFixed(2)),
+    x: Math.round(number("x", 0, 100, 50)),
+    y: Math.round(number("y", 0, 100, 50)),
+    brightness: Math.round(number("brightness", 40, 180, 100)),
+    contrast: Math.round(number("contrast", 40, 200, 100)),
+    saturation: Math.round(number("saturation", 0, 200, 100)),
+    grayscale: Math.round(number("grayscale", 0, 100, 0)),
+    blur: Math.round(number("blur", 0, 8, 0)),
+    preset,
+  });
+}
+
+function readSortOrder(value: unknown, fallback: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  return Math.round(Math.min(Math.max(value, 0), 100000));
 }
 
 function readNumber(value: unknown, max: number): number | null {
@@ -333,9 +393,9 @@ async function publicMedia(env: Env, key: string, range: string | null): Promise
 }
 
 /**
- * Streams one stored object (Backblaze B2, falling back to a legacy R2 copy)
- * through the Worker, so the private bucket never needs to be public. Range
- * requests are forwarded, which is what lets large videos seek.
+ * Streams one stored object from the private Backblaze B2 bucket through the
+ * Worker, so the bucket never needs to be public. Range requests are forwarded,
+ * which is what lets large videos seek.
  */
 async function serveObject(
   env: Env,
@@ -522,17 +582,31 @@ async function createProject(request: Request, env: Env): Promise<Response> {
   const category = String(body.category);
   const kind = body.kind as "graphic" | "video";
   const status = body.status === "draft" ? "draft" : "published";
-  const assetKey = typeof body.assetKey === "string" ? body.assetKey : "";
+  let assetKey = typeof body.assetKey === "string" ? body.assetKey : "";
   const thumbKey = typeof body.thumbKey === "string" && body.thumbKey ? body.thumbKey : null;
   const displayRatio = readRatio(body.displayRatio, "auto") ?? "auto";
   const assetWidth = readNumber(body.assetWidth, 20000);
   const assetHeight = readNumber(body.assetHeight, 20000);
+  const thumbStyle = readThumbStyle(body.thumbStyle);
   const durationSeconds =
     typeof body.durationSeconds === "number" && Number.isFinite(body.durationSeconds) && body.durationSeconds > 0
       ? Math.min(body.durationSeconds, 86400)
       : null;
 
-  if (!assetKey.startsWith(kind === "graphic" ? "graphics/" : "videos/")) {
+  /* A video link replaces the uploaded file: no bytes are stored, only the URL. */
+  const sourceRaw = typeof body.sourceUrl === "string" ? body.sourceUrl.trim().slice(0, 600) : "";
+  const isLink = sourceRaw.length > 0;
+  let sourceUrl: string | null = null;
+
+  if (isLink) {
+    if (kind !== "video") return fail("External video links can only be published as video projects.");
+    const parsed = parseVideoSourceUrl(sourceRaw);
+    if (parsed.provider === "unknown") {
+      return fail("Unsupported video URL. Use a YouTube, Vimeo or direct MP4/WebM/MOV link.", 415);
+    }
+    sourceUrl = parsed.normalized;
+    assetKey = `link/${crypto.randomUUID()}`;
+  } else if (!assetKey.startsWith(kind === "graphic" ? "graphics/" : "videos/")) {
     return fail("Asset does not match the project kind.");
   }
   if (thumbKey && !thumbKey.startsWith("thumbs/")) return fail("Invalid thumbnail key.");
@@ -540,27 +614,30 @@ async function createProject(request: Request, env: Env): Promise<Response> {
   let asset: StoredObject | null = null;
   let thumb: StoredObject | null = null;
   try {
-    asset = await headObject(env, assetKey);
+    if (!isLink) asset = await headObject(env, assetKey);
     thumb = thumbKey ? await headObject(env, thumbKey) : null;
   } catch (error) {
     return fail(error instanceof Error ? error.message : "Storage is unavailable.", 502);
   }
-  if (!asset) return fail("Uploaded asset was not found in storage.", 404);
+  if (!isLink && !asset) return fail("Uploaded asset was not found in storage.", 404);
   if (thumbKey && !thumb) return fail("Uploaded thumbnail was not found in storage.", 404);
 
   const ts = nowIso();
   const id = crypto.randomUUID();
-  const hash = asset.sha256 ?? null;
+  const hash = asset?.sha256 ?? null;
 
   await ensureSortOrder(env);
   const last = await env.DB.prepare("SELECT COALESCE(MAX(sort_order), -1) AS max FROM projects").first<{ max: number }>();
-  const sortOrder = (last?.max ?? -1) + 1;
+  const sortOrder =
+    body.sortOrder !== undefined
+      ? readSortOrder(body.sortOrder, (last?.max ?? -1) + 1)
+      : (last?.max ?? -1) + 1;
 
   try {
     await env.DB.prepare(
       `INSERT INTO projects
-        (id, kind, title, description, category, status, asset_key, asset_type, asset_size, asset_hash, thumb_key, thumb_type, created_at, updated_at, sort_order, display_ratio, asset_width, asset_height, duration_seconds)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        (id, kind, title, description, category, status, asset_key, asset_type, asset_size, asset_hash, thumb_key, thumb_type, created_at, updated_at, sort_order, display_ratio, asset_width, asset_height, duration_seconds, source_url, thumb_style)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
       .bind(
         id,
@@ -570,8 +647,8 @@ async function createProject(request: Request, env: Env): Promise<Response> {
         category,
         status,
         assetKey,
-        asset.contentType ?? "",
-        asset.size,
+        asset?.contentType ?? (isLink ? "video/link" : ""),
+        asset?.size ?? 0,
         hash,
         thumbKey,
         thumb?.contentType ?? null,
@@ -581,7 +658,9 @@ async function createProject(request: Request, env: Env): Promise<Response> {
         displayRatio,
         assetWidth,
         assetHeight,
-        durationSeconds
+        durationSeconds,
+        sourceUrl,
+        thumbStyle
       )
       .run();
   } catch (error) {
@@ -624,6 +703,8 @@ async function updateProject(request: Request, env: Env, id: string): Promise<Re
   let thumbType = existing.thumb_type;
   let replacedThumb: string | null = null;
   const displayRatio = readRatio(body.displayRatio, existing.display_ratio ?? null);
+  const thumbStyle = body.thumbStyle === undefined ? existing.thumb_style : readThumbStyle(body.thumbStyle);
+  const sortOrder = readSortOrder(body.sortOrder, existing.sort_order ?? 0);
   const assetWidth = body.assetWidth === undefined ? existing.asset_width ?? null : readNumber(body.assetWidth, 20000);
   const assetHeight = body.assetHeight === undefined ? existing.asset_height ?? null : readNumber(body.assetHeight, 20000);
   const durationSeconds =
@@ -661,6 +742,7 @@ async function updateProject(request: Request, env: Env, id: string): Promise<Re
   let assetHash = existing.asset_hash;
   let replacedAsset: string | null = null;
   let replacedAssetHash: string | null = null;
+  let sourceUrl = existing.source_url ?? null;
   let nextWidth = assetWidth;
   let nextHeight = assetHeight;
   let nextDuration = durationSeconds;
@@ -691,12 +773,33 @@ async function updateProject(request: Request, env: Env, id: string): Promise<Re
     nextDuration = durationSeconds;
   }
 
+  /* Replace an uploaded video with an external link (or change the link URL). */
+  if (Object.prototype.hasOwnProperty.call(body, "sourceUrl")) {
+    const raw = typeof body.sourceUrl === "string" ? body.sourceUrl.trim().slice(0, 600) : "";
+    if (!raw) return fail("A video URL is required.");
+    if (kind !== "video") return fail("External video links can only be used for video projects.");
+    const parsed = parseVideoSourceUrl(raw);
+    if (parsed.provider === "unknown") {
+      return fail("Unsupported video URL. Use a YouTube, Vimeo or direct MP4/WebM/MOV link.", 415);
+    }
+    if (existing.asset_key && !existing.asset_key.startsWith("link/")) {
+      replacedAsset = existing.asset_key;
+      replacedAssetHash = existing.asset_hash;
+    }
+    sourceUrl = parsed.normalized;
+    assetKey = `link/${crypto.randomUUID()}`;
+    assetType = "video/link";
+    assetSize = 0;
+    assetHash = null;
+  }
+
   try {
     await env.DB.prepare(
       `UPDATE projects
           SET title = ?, description = ?, category = ?, status = ?, thumb_key = ?, thumb_type = ?,
               asset_key = ?, asset_type = ?, asset_size = ?, asset_hash = ?, updated_at = ?,
-              display_ratio = ?, asset_width = ?, asset_height = ?, duration_seconds = ?
+              display_ratio = ?, asset_width = ?, asset_height = ?, duration_seconds = ?,
+              source_url = ?, thumb_style = ?, sort_order = ?
         WHERE id = ?`
     )
       .bind(
@@ -715,6 +818,9 @@ async function updateProject(request: Request, env: Env, id: string): Promise<Re
         nextWidth,
         nextHeight,
         nextDuration,
+        sourceUrl,
+        thumbStyle,
+        sortOrder,
         id
       )
       .run();
@@ -729,7 +835,7 @@ async function updateProject(request: Request, env: Env, id: string): Promise<Re
     await env.DB.prepare("DELETE FROM upload_fingerprints WHERE key = ?").bind(replacedThumb).run();
   }
 
-  if (replacedAsset) {
+  if (replacedAsset && !replacedAsset.startsWith("link/")) {
     await deleteObject(env, [replacedAsset]).catch(() => undefined);
     await env.DB.prepare("DELETE FROM upload_fingerprints WHERE key = ?").bind(replacedAsset).run();
     // The old fingerprint row may have used the hash column; free it for a re-upload.
@@ -813,7 +919,7 @@ async function deleteProject(env: Env, id: string): Promise<Response> {
   await env.DB.prepare("DELETE FROM projects WHERE id = ?").bind(id).run();
 
   const keys = [existing.asset_key, existing.thumb_key].filter(
-    (key): key is string => typeof key === "string" && key.length > 0
+    (key): key is string => typeof key === "string" && key.length > 0 && !key.startsWith("link/")
   );
   if (keys.length) {
     await deleteObject(env, keys).catch(() => undefined);
@@ -1261,7 +1367,7 @@ async function status(env: Env): Promise<Response> {
 /* ------------------------- settings & system health ------------------------ */
 
 const SETTINGS_MAINTENANCE = "maintenance";
-/** R2 object key of the photo hanging in the public Artist portrait frame. */
+/** Storage object key of the photo hanging in the public Artist portrait frame. */
 const SETTINGS_ARTIST_PHOTO = "artist_photo";
 /** Untouched upload kept so the photograph can be re-edited from the original. */
 const SETTINGS_ARTIST_ORIGINAL = "artist_photo_original";
@@ -1450,7 +1556,7 @@ async function adminHealth(request: Request, env: Env): Promise<Response> {
   const dbLatency = Date.now() - dbStart;
 
   const provider = storageProvider(env);
-  const storageLabel = provider === "backblaze-b2" ? "Backblaze B2" : provider === "r2" ? "R2" : "no storage";
+  const storageLabel = provider === "backblaze-b2" ? "Backblaze B2" : "no storage";
 
   const storageStart = Date.now();
   let storageOk = provider !== "none";
@@ -1576,9 +1682,7 @@ async function adminHealth(request: Request, env: Env): Promise<Response> {
       label: "File storage",
       status: storageOk ? "operational" : "failure",
       detail: storageOk
-        ? provider === "backblaze-b2"
-          ? `Backblaze B2 private bucket reachable${env.B2_BUCKET_NAME ? ` · ${env.B2_BUCKET_NAME}` : ""}`
-          : "R2 bucket reachable"
+        ? `Backblaze B2 private bucket reachable${env.B2_BUCKET_NAME ? ` · ${env.B2_BUCKET_NAME}` : ""}`
         : `${storageLabel} bucket unreachable`,
       latencyMs: storageLatency,
       verified: true,

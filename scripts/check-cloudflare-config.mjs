@@ -40,9 +40,19 @@ if (!databaseId) {
 if (!/pages_build_output_dir\s*=\s*"\.\/dist"/.test(toml)) {
   problems.push('wrangler.toml must set pages_build_output_dir = "./dist" for the Pages build.');
 }
-if (!/\[\[r2_buckets\]\]/.test(toml)) problems.push("wrangler.toml has no [[r2_buckets]] binding.");
-if (!/binding\s*=\s*"FILES"/.test(toml)) problems.push('wrangler.toml needs the R2 binding named "FILES".');
+// R2 must stay out of the Pages config: an R2 binding fails the whole Function
+// publish when the account has no R2 subscription. Storage is Backblaze B2.
+if (/\[\[r2_buckets\]\]/.test(toml) || /portfolio-media/.test(toml)) {
+  problems.push(
+    "wrangler.toml still declares the R2 binding (portfolio-media). Remove [[r2_buckets]] — storage is Backblaze B2 only."
+  );
+}
 if (!/binding\s*=\s*"DB"/.test(toml)) problems.push('wrangler.toml needs the D1 binding named "DB".');
+for (const name of ["B2_BUCKET_NAME", "B2_REGION", "B2_ENDPOINT"]) {
+  if (!new RegExp(`^${name}\\s*=`, "m").test(toml)) {
+    problems.push(`wrangler.toml is missing the ${name} variable required by the B2 storage backend.`);
+  }
+}
 
 // The Pages backend only exists if the Functions adapters are in the repo.
 for (const file of ["functions/api/[[path]].ts", "functions/media/[[path]].ts", "public/_routes.json"]) {
@@ -51,7 +61,7 @@ for (const file of ["functions/api/[[path]].ts", "functions/media/[[path]].ts", 
 
 const workerConfig = read("wrangler.worker.toml");
 if (workerConfig === null) {
-  notes.push("wrangler.worker.toml is missing: `npm run dev:api` will not share production D1 + R2.");
+  notes.push("wrangler.worker.toml is missing: `npm run dev:api` will not share production D1 + B2.");
 }
 
 if (!existsSync(".dev.vars")) {
@@ -84,19 +94,19 @@ Required steps (Cloudflare dashboard or wrangler):
 
   1. npx wrangler login
   2. npx wrangler d1 create portfolio-db        # copy database_id into wrangler.toml
-  3. npx wrangler r2 bucket create portfolio-media
-  4. Pages → gursimar-portfolio → Settings → Functions → Bindings
-       DB    = D1 database portfolio-db
-       FILES = R2 bucket portfolio-media
-  5. npx wrangler d1 execute portfolio-db --remote --file worker/schema.sql
-  6. Pages → Settings → Variables and Secrets (Production)
+  3. Pages → gursimar-portfolio → Settings → Functions → Bindings
+       DB = D1 database portfolio-db      (no R2 binding is needed or allowed)
+  4. npx wrangler d1 execute portfolio-db --remote --file worker/schema.sql
+  5. Pages → Settings → Variables and Secrets (Production)
+       B2_BUCKET_NAME, B2_REGION, B2_ENDPOINT   (plain variables)
+       B2_APPLICATION_KEY_ID, B2_APPLICATION_KEY (secrets)
        ADMIN_EMAIL, ADMIN_PASSWORD_HASH, AI_API_KEY (optional)
-  7. npm run migrate:cloudflare                  # copy existing local content up
-  8. git push origin main                        # Pages builds and deploys
+  6. npm run migrate:cloudflare                  # copy existing local database rows up
+  7. git push origin main                        # Pages builds and deploys
 
 See ADMIN_SETUP.md → "Production deployment".`);
   process.exit(1);
 }
 
-console.log("✔ Pages config, D1/R2 bindings and Functions adapters look correct.");
-console.log("  Next: npm run db:remote (schema), npm run migrate:cloudflare (content), git push origin main.");
+console.log("✔ Pages config, D1 binding, B2 variables and Functions adapters look correct.");
+console.log("  Next: npm run db:remote (schema), npm run migrate:cloudflare (rows), git push origin main.");

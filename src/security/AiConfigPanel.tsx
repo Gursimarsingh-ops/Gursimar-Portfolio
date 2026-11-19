@@ -17,7 +17,14 @@ import {
   Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { api, ApiError, type AiSettingsResponse, type AiTestResult } from "@/admin/api";
+import {
+  api,
+  ApiError,
+  type AiAppearanceSettings,
+  type AiChatTestResult,
+  type AiSettingsResponse,
+  type AiTestResult,
+} from "@/admin/api";
 
 function formatWhen(iso: string | null | undefined): string {
   if (!iso) return "Never";
@@ -70,6 +77,23 @@ export function AiConfigPanel() {
   const [showKey, setShowKey] = useState(false);
   const [knowledge, setKnowledge] = useState("");
   const [enabled, setEnabled] = useState(true);
+  const [assistantName, setAssistantName] = useState("");
+  const [welcomeMessage, setWelcomeMessage] = useState("");
+  const [placeholder, setPlaceholder] = useState("");
+  const [availability, setAvailability] = useState<"online" | "away" | "offline">("online");
+  const [temperature, setTemperature] = useState(0.5);
+  const [maxTokens, setMaxTokens] = useState(700);
+  const [timeoutMs, setTimeoutMs] = useState(45000);
+  const [appearance, setAppearance] = useState<AiAppearanceSettings>({
+    theme: "dark",
+    accent: "#7dd3fc",
+    position: "right",
+    welcomeAnimation: true,
+    buttonLabel: "Portfolio Assistant",
+  });
+  const [chatMessage, setChatMessage] = useState("What services does GurSimar offer?");
+  const [chatTest, setChatTest] = useState<AiChatTestResult | null>(null);
+  const [testingChat, setTestingChat] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [toggling, setToggling] = useState(false);
@@ -84,6 +108,14 @@ export function AiConfigPanel() {
     setApiUrl(next.settings.apiUrl);
     setKnowledge(next.settings.knowledge);
     setEnabled(next.settings.enabled);
+    setAssistantName(next.settings.assistantName);
+    setWelcomeMessage(next.settings.welcomeMessage);
+    setPlaceholder(next.settings.placeholder);
+    setAvailability(next.settings.availability);
+    setTemperature(next.settings.temperature);
+    setMaxTokens(next.settings.maxTokens);
+    setTimeoutMs(next.settings.timeoutMs);
+    setAppearance(next.settings.appearance);
   }, []);
 
   const load = useCallback(async () => {
@@ -112,6 +144,14 @@ export function AiConfigPanel() {
         apiUrl: apiUrl.trim(),
         ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
         knowledge,
+        assistantName: assistantName.trim(),
+        welcomeMessage: welcomeMessage.trim(),
+        placeholder: placeholder.trim(),
+        availability,
+        temperature,
+        maxTokens,
+        timeoutMs,
+        appearance,
       });
       hydrate(next);
       setApiKey("");
@@ -154,6 +194,24 @@ export function AiConfigPanel() {
       });
     } finally {
       setTesting(false);
+    }
+  };
+
+  const runChatTest = async () => {
+    setTestingChat(true);
+    setChatTest(null);
+    try {
+      setChatTest(await api.testAiMessage(chatMessage.trim()));
+    } catch (err) {
+      setChatTest({
+        ok: false,
+        reply: null,
+        latencyMs: 0,
+        model: model || "—",
+        message: err instanceof ApiError ? err.message : "The test message could not be sent.",
+      });
+    } finally {
+      setTestingChat(false);
     }
   };
 
@@ -373,13 +431,14 @@ export function AiConfigPanel() {
             <input
               value={model}
               onChange={(event) => setModel(event.target.value)}
-              placeholder={data?.defaultModel ?? "google/gemma-4-31b-it"}
+              placeholder={data?.defaultModel ?? "minimax-m3.1-flash"}
               spellCheck={false}
               className={cn(inputCls, "font-mono")}
             />
-            <span className="mt-1 block text-[9px] text-white/25">
-              Text models: google/gemma-4-31b-it, openai/gpt-oss-20b. Image analysis: a vision model
-              such as meta/muse-glimmer-30b or nvidia/nemotron-3.5-super-vl-120b-a12b.
+            <span className="mt-1 block text-[9px] leading-relaxed text-white/25">
+              Default: <span className="font-mono">minimax-m3.1-flash</span> (NVIDIA NIM, multimodal).
+              The model name is free-form — any chat model available on the configured NIM endpoint can be
+              entered here without a code change.
             </span>
           </label>
 
@@ -476,6 +535,47 @@ export function AiConfigPanel() {
           </div>
 
           <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+            <p className="text-[10px] uppercase tracking-[0.22em] text-white/60">Send a test message</p>
+            <p className="mt-1 text-[10px] leading-relaxed text-white/35">
+              Runs the same generation path as a visitor chat using the saved configuration.
+            </p>
+            <textarea
+              value={chatMessage}
+              onChange={(event) => setChatMessage(event.target.value.slice(0, 2000))}
+              rows={2}
+              className={cn(inputCls, "resize-y")}
+              placeholder="Ask something a visitor would ask…"
+            />
+            <button
+              type="button"
+              onClick={() => void runChatTest()}
+              disabled={testingChat || !chatMessage.trim()}
+              className="mt-2 inline-flex items-center gap-2 rounded-full border border-white/18 px-4 py-2 text-[10px] uppercase tracking-[0.14em] text-white/70 hover:border-white/35 hover:text-white disabled:opacity-45"
+            >
+              {testingChat ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+              {testingChat ? "Generating…" : "Send test message"}
+            </button>
+
+            {chatTest && (
+              <div className="mt-2.5 space-y-2">
+                <Notice tone={chatTest.ok ? "success" : "error"}>
+                  {chatTest.message} · {chatTest.latencyMs} ms · {chatTest.model}
+                </Notice>
+                {chatTest.reply && (
+                  <p className="max-h-44 overflow-y-auto whitespace-pre-wrap rounded-lg border border-white/10 bg-black/30 px-2.5 py-2 text-[10.5px] leading-relaxed text-white/75">
+                    {chatTest.reply}
+                  </p>
+                )}
+                {chatTest.diagnostics && (
+                  <p className="max-h-32 overflow-y-auto rounded-lg border border-red-400/20 bg-red-500/[0.07] px-2.5 py-2 font-mono text-[9.5px] leading-relaxed text-red-200/80">
+                    {chatTest.diagnostics}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
             <p className="text-[10px] uppercase tracking-[0.22em] text-white/60">Capabilities</p>
             <ul className="mt-2 space-y-1.5">
               {[
@@ -493,6 +593,233 @@ export function AiConfigPanel() {
                 </li>
               ))}
             </ul>
+          </div>
+        </div>
+      </div>
+
+      {/* --------------------------- general & model --------------------------- */}
+      <div className="grid gap-4 xl:grid-cols-2">
+        <div className="space-y-3 rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+          <p className="text-[10px] uppercase tracking-[0.22em] text-white/60">General settings</p>
+
+          <label className="block">
+            <span className={labelCls}>Assistant name</span>
+            <input
+              value={assistantName}
+              onChange={(event) => setAssistantName(event.target.value.slice(0, 60))}
+              maxLength={60}
+              className={inputCls}
+            />
+          </label>
+
+          <label className="block">
+            <span className={labelCls}>Welcome message</span>
+            <textarea
+              value={welcomeMessage}
+              onChange={(event) => setWelcomeMessage(event.target.value.slice(0, 600))}
+              rows={3}
+              maxLength={600}
+              className={cn(inputCls, "resize-y")}
+            />
+          </label>
+
+          <label className="block">
+            <span className={labelCls}>Input placeholder</span>
+            <input
+              value={placeholder}
+              onChange={(event) => setPlaceholder(event.target.value.slice(0, 120))}
+              maxLength={120}
+              className={inputCls}
+            />
+          </label>
+
+          <label className="block">
+            <span className={labelCls}>Availability</span>
+            <select
+              value={availability}
+              onChange={(event) => setAvailability(event.target.value as "online" | "away" | "offline")}
+              className={inputCls}
+            >
+              <option value="online">Online — answering visitors</option>
+              <option value="away">Away — slower replies</option>
+              <option value="offline">Offline — contact form only</option>
+            </select>
+          </label>
+        </div>
+
+        <div className="space-y-3 rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+          <p className="text-[10px] uppercase tracking-[0.22em] text-white/60">Model settings</p>
+
+          <label className="block">
+            <span className={cn(labelCls, "flex items-center justify-between")}>
+              Temperature
+              <span className="text-white/60">{temperature.toFixed(2)}</span>
+            </span>
+            <input
+              type="range"
+              min={0}
+              max={2}
+              step={0.05}
+              value={temperature}
+              onChange={(event) => setTemperature(Number(event.target.value))}
+              className="mt-2 w-full accent-white"
+            />
+            <span className="mt-1 block text-[9px] text-white/25">
+              Lower is more factual; higher is more conversational. NVIDIA NIM chat models accept 0–2.
+            </span>
+          </label>
+
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block">
+              <span className={labelCls}>Max response tokens</span>
+              <input
+                type="number"
+                min={64}
+                max={4000}
+                value={maxTokens}
+                onChange={(event) => setMaxTokens(Number(event.target.value))}
+                className={inputCls}
+              />
+            </label>
+            <label className="block">
+              <span className={labelCls}>Timeout (ms)</span>
+              <input
+                type="number"
+                min={5000}
+                max={120000}
+                step={1000}
+                value={timeoutMs}
+                onChange={(event) => setTimeoutMs(Number(event.target.value))}
+                className={inputCls}
+              />
+            </label>
+          </div>
+
+          <p className="text-[9px] leading-relaxed text-white/25">
+            These values are sent with every visitor request and every test. The provider is fixed to NVIDIA NIM
+            because the endpoint and authentication format are provider-specific.
+          </p>
+        </div>
+      </div>
+
+      {/* --------------------------- appearance & usage --------------------------- */}
+      <div className="grid gap-4 xl:grid-cols-2">
+        <div className="space-y-3 rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+          <p className="text-[10px] uppercase tracking-[0.22em] text-white/60">Appearance settings</p>
+
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block">
+              <span className={labelCls}>Theme</span>
+              <select
+                value={appearance.theme}
+                onChange={(event) =>
+                  setAppearance((current) => ({ ...current, theme: event.target.value as "dark" | "light" }))
+                }
+                className={inputCls}
+              >
+                <option value="dark">Dark glass</option>
+                <option value="light">Light glass</option>
+              </select>
+            </label>
+            <label className="block">
+              <span className={labelCls}>Position</span>
+              <select
+                value={appearance.position}
+                onChange={(event) =>
+                  setAppearance((current) => ({ ...current, position: event.target.value as "left" | "right" }))
+                }
+                className={inputCls}
+              >
+                <option value="right">Bottom right</option>
+                <option value="left">Bottom left</option>
+              </select>
+            </label>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block">
+              <span className={labelCls}>Accent colour</span>
+              <div className="mt-1.5 flex items-center gap-2">
+                <input
+                  type="color"
+                  value={appearance.accent}
+                  onChange={(event) =>
+                    setAppearance((current) => ({ ...current, accent: event.target.value }))
+                  }
+                  className="h-9 w-12 cursor-pointer rounded-md border border-white/12 bg-transparent"
+                />
+                <input
+                  value={appearance.accent}
+                  onChange={(event) =>
+                    setAppearance((current) => ({ ...current, accent: event.target.value }))
+                  }
+                  pattern="^#[0-9a-fA-F]{6}$"
+                  className={cn(inputCls, "mt-0 font-mono")}
+                />
+              </div>
+            </label>
+            <label className="block">
+              <span className={labelCls}>Launcher label</span>
+              <input
+                value={appearance.buttonLabel}
+                onChange={(event) =>
+                  setAppearance((current) => ({ ...current, buttonLabel: event.target.value.slice(0, 40) }))
+                }
+                maxLength={40}
+                className={inputCls}
+              />
+            </label>
+          </div>
+
+          <label className="flex items-center justify-between rounded-lg border border-white/10 bg-black/25 px-3 py-2">
+            <span className="text-[10.5px] text-white/60">Welcome animation</span>
+            <input
+              type="checkbox"
+              checked={appearance.welcomeAnimation}
+              onChange={(event) =>
+                setAppearance((current) => ({ ...current, welcomeAnimation: event.target.checked }))
+              }
+              className="h-3.5 w-3.5 accent-white"
+            />
+          </label>
+        </div>
+
+        <div className="space-y-3 rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+          <p className="text-[10px] uppercase tracking-[0.22em] text-white/60">Usage &amp; monitoring</p>
+
+          <div className="grid grid-cols-2 gap-2">
+            {[
+              { label: "Conversations", value: String(data?.usage?.conversations ?? 0) },
+              { label: "Messages", value: String(data?.usage?.messages ?? 0) },
+              { label: "Failed requests", value: String(data?.settings.failedRequests ?? 0) },
+              { label: "Last latency", value: data?.settings.lastLatencyMs ? `${data.settings.lastLatencyMs} ms` : "—" },
+            ].map((item) => (
+              <div key={item.label} className="rounded-xl border border-white/[0.08] bg-black/25 px-3 py-2">
+                <p className="text-[8px] uppercase tracking-[0.16em] text-white/30">{item.label}</p>
+                <p className="mt-0.5 text-[12px] text-white/80">{item.value}</p>
+              </div>
+            ))}
+          </div>
+
+          <div>
+            <p className="text-[9px] uppercase tracking-[0.16em] text-white/30">Recent errors</p>
+            {data?.settings.errors.length ? (
+              <ul className="mt-2 max-h-40 space-y-1.5 overflow-y-auto pr-1">
+                {data.settings.errors.map((entry, index) => (
+                  <li
+                    key={`${entry.at}-${index}`}
+                    className="rounded-lg border border-red-400/15 bg-red-500/[0.06] px-2.5 py-2 text-[9.5px] leading-relaxed text-red-200/75"
+                  >
+                    <span className="block text-[8px] uppercase tracking-[0.14em] text-red-200/40">
+                      {formatWhen(entry.at)}
+                    </span>
+                    {entry.message}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-2 text-[10px] text-white/30">No provider errors recorded.</p>
+            )}
           </div>
         </div>
       </div>

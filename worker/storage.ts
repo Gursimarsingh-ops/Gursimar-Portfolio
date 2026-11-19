@@ -1,20 +1,16 @@
 /**
  * Server-side object storage for portfolio media.
  *
- * Backblaze B2 is the primary store, accessed through its S3-compatible API
- * with SigV4 request signing done here in the Worker (Web Crypto only, no SDK).
- * The existing R2 binding stays available as:
- *
- * - the store for assets uploaded before this integration, so no published
- *   portfolio item disappears, and
- * - the storage backend when B2 is not configured (offline development).
+ * Backblaze B2 is the only store, accessed through its S3-compatible API with
+ * SigV4 request signing done here in the Worker (Web Crypto only, no SDK, no
+ * Cloudflare R2 binding). Cloudflare does not need R2 enabled to deploy this
+ * project.
  *
  * Credentials never leave the server: the browser only ever talks to
  * /api/admin/media/* and /media/*, both served by this Worker.
  */
 
 export interface StorageEnv {
-  FILES?: R2Bucket;
   B2_APPLICATION_KEY_ID?: string;
   B2_APPLICATION_KEY?: string;
   B2_BUCKET_NAME?: string;
@@ -58,7 +54,7 @@ export interface MultipartUpload {
   initiated: string | null;
 }
 
-export type StorageProvider = "backblaze-b2" | "r2" | "none";
+export type StorageProvider = "backblaze-b2" | "none";
 
 const EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
@@ -150,9 +146,7 @@ export function b2Config(env: StorageEnv): B2Config | null {
 }
 
 export function storageProvider(env: StorageEnv): StorageProvider {
-  if (b2Config(env)) return "backblaze-b2";
-  if (env.FILES) return "r2";
-  return "none";
+  return b2Config(env) ? "backblaze-b2" : "none";
 }
 
 export function storageConfigured(env: StorageEnv): boolean {
@@ -294,51 +288,23 @@ function xmlEscape(value: string): string {
 
 /* ---------------------------------- reads --------------------------------- */
 
-function r2Head(env: StorageEnv, key: string): Promise<StoredObject | null> {
-  if (!env.FILES) return Promise.resolve(null);
-  return env.FILES.head(key).then((object) =>
-    object
-      ? {
-          size: object.size,
-          contentType: object.httpMetadata?.contentType ?? null,
-          sha256: object.customMetadata?.sha256 ?? null,
-          originalName: object.customMetadata?.originalName ?? null,
-          etag: object.httpEtag ?? null,
-        }
-      : null
-  );
-}
-
 export async function headObject(env: StorageEnv, key: string): Promise<StoredObject | null> {
   const config = b2Config(env);
-  if (config) {
-    const response = await b2Fetch(config, { method: "HEAD", key });
-    if (response.ok) {
-      const length = Number(response.headers.get("content-length") ?? "0");
-      return {
-        size: Number.isFinite(length) ? length : 0,
-        contentType: response.headers.get("content-type"),
-        sha256: response.headers.get("x-amz-meta-sha256"),
-        originalName: response.headers.get("x-amz-meta-original-name"),
-        etag: response.headers.get("etag"),
-      };
-    }
-    if (response.status !== 404) throw await b2Failure(response, "Backblaze B2 metadata request");
-  }
-  // Legacy R2 asset (uploaded before the B2 integration) or R2-only dev mode.
-  return r2Head(env, key);
-}
+  if (!config) return null;
 
-function parseRange(range: string | null): { offset: number; length?: number } | null {
-  if (!range) return null;
-  const match = range.match(/^bytes=(\d+)-(\d*)$/);
-  if (!match) return null;
-  const offset = Number(match[1]);
-  if (!Number.isFinite(offset)) return null;
-  if (!match[2]) return { offset };
-  const end = Number(match[2]);
-  if (!Number.isFinite(end) || end < offset) return null;
-  return { offset, length: end - offset + 1 };
+  const response = await b2Fetch(config, { method: "HEAD", key });
+  if (response.ok) {
+    const length = Number(response.headers.get("content-length") ?? "0");
+    return {
+      size: Number.isFinite(length) ? length : 0,
+      contentType: response.headers.get("content-type"),
+      sha256: response.headers.get("x-amz-meta-sha256"),
+      originalName: response.headers.get("x-amz-meta-original-name"),
+      etag: response.headers.get("etag"),
+    };
+  }
+  if (response.status === 404) return null;
+  throw await b2Failure(response, "Backblaze B2 metadata request");
 }
 
 export async function readObject(
@@ -347,60 +313,33 @@ export async function readObject(
   range: string | null = null
 ): Promise<ReadResult | null> {
   const config = b2Config(env);
-  if (config) {
-    const response = await b2Fetch(config, {
-      method: "GET",
-      key,
-      headers: range ? { range } : {},
-    });
-    if (response.ok || response.status === 206) {
-      return {
-        body: response.body,
-        status: response.status,
-        contentType: response.headers.get("content-type"),
-        contentLength: response.headers.get("content-length"),
-        contentRange: response.headers.get("content-range"),
-        etag: response.headers.get("etag"),
-        lastModified: response.headers.get("last-modified"),
-      };
-    }
-    if (response.status !== 404) throw await b2Failure(response, "Backblaze B2 download");
-    // Fall through to R2 so pre-migration uploads keep working.
+  if (!config) return null;
+
+  const response = await b2Fetch(config, {
+    method: "GET",
+    key,
+    headers: range ? { range } : {},
+  });
+  if (response.ok || response.status === 206) {
+    return {
+      body: response.body,
+      status: response.status,
+      contentType: response.headers.get("content-type"),
+      contentLength: response.headers.get("content-length"),
+      contentRange: response.headers.get("content-range"),
+      etag: response.headers.get("etag"),
+      lastModified: response.headers.get("last-modified"),
+    };
   }
+  if (response.status === 404) return null;
+  throw await b2Failure(response, "Backblaze B2 download");
+}
 
-  if (!env.FILES) return null;
-
-  const partial = parseRange(range);
-  const object = partial
-    ? await env.FILES.get(key, partial.length ? { range: partial } : { range: { offset: partial.offset } })
-    : await env.FILES.get(key);
-  if (!object) return null;
-
-  const headers = new Headers();
-  object.writeHttpMetadata(headers);
-  const size = object.size;
-  let status = 200;
-  let contentRange: string | null = null;
-  let contentLength = size;
-
-  const objectRange = "range" in object ? (object.range as { offset?: number; length?: number } | undefined) : undefined;
-  if (objectRange && typeof objectRange.offset === "number") {
-    const offset = objectRange.offset;
-    const length = objectRange.length ?? size - offset;
-    status = 206;
-    contentLength = length;
-    contentRange = `bytes ${offset}-${offset + length - 1}/${size}`;
-  }
-
-  return {
-    body: object.body as ReadableStream<Uint8Array>,
-    status,
-    contentType: headers.get("content-type"),
-    contentLength: String(contentLength),
-    contentRange,
-    etag: object.httpEtag ?? null,
-    lastModified: object.uploaded?.toUTCString() ?? null,
-  };
+/** Reads a whole object into memory (attachments, AI image input, PDF text). */
+export async function readObjectBytes(env: StorageEnv, key: string): Promise<ArrayBuffer | null> {
+  const object = await readObject(env, key);
+  if (!object?.body) return null;
+  return new Response(object.body).arrayBuffer();
 }
 
 /* --------------------------------- writes --------------------------------- */
@@ -416,17 +355,7 @@ export async function putObject(
   meta: { contentType: string; sha256?: string | null; originalName?: string | null }
 ): Promise<void> {
   const config = b2Config(env);
-  if (!config) {
-    if (!env.FILES) throw new StorageError("File storage is not configured on this deployment.", 503);
-    await env.FILES.put(key, body, {
-      httpMetadata: { contentType: meta.contentType },
-      customMetadata: {
-        ...(meta.sha256 ? { sha256: meta.sha256 } : {}),
-        ...(meta.originalName ? { originalName: asciiHeader(meta.originalName) } : {}),
-      },
-    });
-    return;
-  }
+  if (!config) throw new StorageError("File storage is not configured on this deployment.", 503);
 
   const headers: Record<string, string> = { "content-type": meta.contentType || "application/octet-stream" };
   if (meta.sha256) headers["x-amz-meta-sha256"] = meta.sha256;
@@ -438,13 +367,10 @@ export async function putObject(
 
 export async function deleteObject(env: StorageEnv, keys: string[]): Promise<void> {
   const config = b2Config(env);
+  if (!config) return;
   for (const key of keys) {
-    if (config) {
-      const response = await b2Fetch(config, { method: "DELETE", key });
-      if (!response.ok && response.status !== 404) throw await b2Failure(response, "Backblaze B2 delete");
-    }
-    // Keep pre-migration copies from resurfacing (ignore failures).
-    if (env.FILES) await env.FILES.delete(key).catch(() => undefined);
+    const response = await b2Fetch(config, { method: "DELETE", key });
+    if (!response.ok && response.status !== 404) throw await b2Failure(response, "Backblaze B2 delete");
   }
 }
 
@@ -454,23 +380,7 @@ export async function listObjects(
 ): Promise<ListResult> {
   const limit = Math.min(Math.max(options.limit ?? 100, 1), 1000);
   const config = b2Config(env);
-  if (!config) {
-    if (!env.FILES) return { objects: [], cursor: null };
-    const listed = await env.FILES.list({
-      prefix: options.prefix,
-      limit,
-      cursor: options.cursor ?? undefined,
-    });
-    return {
-      objects: listed.objects.map((object) => ({
-        key: object.key,
-        size: object.size,
-        lastModified: object.uploaded?.toISOString() ?? null,
-        etag: object.httpEtag ?? null,
-      })),
-      cursor: listed.truncated ? listed.cursor : null,
-    };
-  }
+  if (!config) return { objects: [], cursor: null };
 
   const query: [string, string][] = [
     ["list-type", "2"],

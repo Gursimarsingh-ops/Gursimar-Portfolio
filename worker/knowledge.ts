@@ -83,10 +83,10 @@ SECRECY (absolute)
 /** NVIDIA NIM is OpenAI-compatible, so the same request shape works. */
 export const AI_DEFAULT_PROVIDER = "nvidia-nim";
 export const AI_DEFAULT_API_URL = "https://integrate.api.nvidia.com/v1/chat/completions";
-/** Current free NIM text model (verified 2026-11-17 model list). */
-export const AI_DEFAULT_MODEL = "google/gemma-4-31b-it";
+/** Configured NVIDIA NIM model (editable in the dashboard). */
+export const AI_DEFAULT_MODEL = "minimax-m3.1-flash";
 
 /** Vision-capable NVIDIA NIM models accept OpenAI-style image_url content parts. */
 export const AI_VISION_MODEL_HINT =
-  /(vision|vl\b|llava|pixtral|gemma-4|muse-glimmer|kimi-k|qwen[^ ]*vl|nemotron[^ ]*(vl|omni)|llama-4|llama-3\.2-(11b|90b)-vision)/i;
+  /(vision|vl\b|llava|pixtral|gemma-4|muse-glimmer|kimi-k|qwen[^ ]*vl|nemotron[^ ]*(vl|omni)|llama-4|llama-3\.2-(11b|90b)-vision|minimax-m3)/i;
 

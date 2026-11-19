@@ -1,7 +1,8 @@
 # ---------------------------------------------------------------------------
 # Standalone Worker target — used for local development against the SAME
-# production D1 + R2, and available as an alternative deploy if the site is
-# ever moved from Pages to a Worker. It is NOT used by the Pages build.
+# production D1 (and the Backblaze B2 bucket), and available as an alternative
+# deploy if the site is ever moved from Pages to a Worker. It is NOT used by the
+# Pages build. No R2 binding: object storage is Backblaze B2 only.
 #
 #   shared (default)  npm run dev:api       -> production D1 + R2
 #   offline only      npm run dev:api:local -> emulated .wrangler/state
@@ -26,14 +27,11 @@ database_name = "portfolio-db"
 database_id = "00000000-0000-4000-8000-000000000000"
 remote = true
 
-# Legacy portfolio assets and client request attachments.
-[[r2_buckets]]
-binding = "FILES"
-bucket_name = "portfolio-media"
-remote = true
-
 [vars]
 APP_NAME = "Gursimar Singh Portfolio"
 B2_BUCKET_NAME = "gursimar-portfolio"
 B2_REGION = "us-east-005"
 B2_ENDPOINT = "https://s3.us-east-005.backblazeb2.com"
+
+# B2_APPLICATION_KEY_ID and B2_APPLICATION_KEY are secrets: put them in
+# .dev.vars for local development (see .dev.vars.example).

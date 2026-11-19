@@ -3,14 +3,18 @@ import { VIDEO_CATEGORIES } from "@/data/video-editing";
 import { ScreenFrame } from "@/components/portfolio/ScreenFrame";
 import { VideoPlayerDialog } from "@/components/portfolio/VideoPlayerDialog";
 import { usePublishedProjects } from "@/lib/portfolio";
+import { fallbackPoster, type ThumbStyle } from "@/lib/video";
 import { cn } from "@/lib/utils";
 
 interface Playing {
   title: string;
   category: string;
   videoUrl?: string | null;
+  sourceUrl?: string | null;
   posterUrl?: string | null;
   description?: string;
+  ratio?: string | null;
+  thumbStyle?: ThumbStyle | null;
 }
 
 export function VideoPortfolio() {
@@ -92,14 +96,18 @@ export function VideoPortfolio() {
               ratio={project.ratio ?? "auto"}
               variant="video"
               label={project.title}
-              posterUrl={project.thumbUrl}
+              posterUrl={project.thumbUrl ?? fallbackPoster(project.sourceUrl)}
+              thumbStyle={project.thumbStyle}
               onClick={() =>
                 setPlaying({
                   title: project.title,
                   category: current.label,
-                  videoUrl: project.mediaUrl,
+                  videoUrl: project.sourceUrl ? null : project.mediaUrl,
+                  sourceUrl: project.sourceUrl,
                   posterUrl: project.thumbUrl,
                   description: project.description,
+                  ratio: project.ratio,
+                  thumbStyle: project.thumbStyle,
                 })
               }
             />
@@ -113,8 +121,10 @@ export function VideoPortfolio() {
         title={playing?.title ?? ""}
         subtitle={playing?.category ?? ""}
         videoUrl={playing?.videoUrl}
+        sourceUrl={playing?.sourceUrl}
         posterUrl={playing?.posterUrl}
         description={playing?.description}
+        ratio={playing?.ratio}
       />
     </section>
   );

@@ -13,6 +13,12 @@ CREATE TABLE IF NOT EXISTS projects (
   thumb_key TEXT,
   thumb_type TEXT,
   sort_order INTEGER NOT NULL DEFAULT 0,
+  display_ratio TEXT,
+  asset_width INTEGER,
+  asset_height INTEGER,
+  duration_seconds REAL,
+  source_url TEXT,
+  thumb_style TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );

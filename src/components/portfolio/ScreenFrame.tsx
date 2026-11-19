@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { thumbFilter, thumbObjectPosition, thumbScale, type ThumbStyle } from "@/lib/video";
 
 interface ScreenFrameProps {
   /** "auto" (or omitted) follows the uploaded file's real dimensions. */
@@ -10,6 +11,8 @@ interface ScreenFrameProps {
   imageUrl?: string | null;
   /** Poster/cover image for uploaded video projects. */
   posterUrl?: string | null;
+  /** Crop/filter applied to the uploaded thumbnail. */
+  thumbStyle?: ThumbStyle | null;
 }
 
 export function ScreenFrame({
@@ -19,6 +22,7 @@ export function ScreenFrame({
   variant = "image",
   imageUrl,
   posterUrl,
+  thumbStyle,
 }: ScreenFrameProps) {
   const media = imageUrl ?? posterUrl;
   const [detected, setDetected] = useState<number | null>(null);
@@ -52,7 +56,12 @@ export function ScreenFrame({
                     const { naturalWidth, naturalHeight } = event.currentTarget;
                     if (naturalWidth && naturalHeight) setDetected(naturalWidth / naturalHeight);
                   }}
-                  className="absolute inset-0 h-full w-full object-cover transition-transform duration-700 group-hover:scale-[1.03]"
+                  style={{
+                    objectPosition: thumbObjectPosition(thumbStyle),
+                    filter: thumbFilter(thumbStyle),
+                    transform: `scale(${thumbScale(thumbStyle)})`,
+                  }}
+                  className="absolute inset-0 h-full w-full object-cover transition-transform duration-700"
                 />
                 <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/45 via-transparent to-transparent opacity-70" />
                 {variant === "video" && (

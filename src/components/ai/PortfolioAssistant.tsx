@@ -83,6 +83,7 @@ export function PortfolioAssistant({ onHire }: { onHire: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const closeTimer = useRef<number | null>(null);
@@ -190,6 +191,13 @@ export function PortfolioAssistant({ onHire }: { onHire: () => void }) {
   }, [open]);
 
   const available = Boolean(status?.enabled && status?.configured);
+  const assistantName = status?.assistantName || "Portfolio Assistant";
+  const welcome =
+    status?.welcomeMessage ||
+    "Hi, I'm the portfolio assistant for GurSimar Singh. Ask about services, experience, software or how to start a project.";
+  const placeholder = status?.placeholder || "Ask about services, experience, hiring…";
+  const accent = status?.appearance?.accent || "#7dd3fc";
+  const onLeft = status?.appearance?.position === "left";
 
   const addFiles = (incoming: FileList | null) => {
     if (!incoming) return;
@@ -207,6 +215,13 @@ export function PortfolioAssistant({ onHire }: { onHire: () => void }) {
     }
     setFiles(next);
     if (inputRef.current) inputRef.current.value = "";
+  };
+
+  const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setDragging(false);
+    if (!available || busy) return;
+    addFiles(event.dataTransfer.files);
   };
 
   const removeFile = (index: number) => setFiles((current) => current.filter((_, i) => i !== index));
@@ -265,6 +280,13 @@ export function PortfolioAssistant({ onHire }: { onHire: () => void }) {
         : "Paused by administrator"
     : "Connecting…";
 
+  const correspondence =
+    status?.availability === "away"
+      ? "Away · slower replies"
+      : status?.availability === "offline"
+        ? "Offline · use the Hire Me form"
+        : statusLabel;
+
   return (
     <>
       <button
@@ -273,7 +295,8 @@ export function PortfolioAssistant({ onHire }: { onHire: () => void }) {
         aria-expanded={open}
         aria-label="Open portfolio AI assistant"
         className={cn(
-          "group fixed bottom-4 right-3 z-[65] grid h-12 w-12 place-items-center overflow-hidden rounded-full border shadow-[0_24px_55px_-20px_rgba(0,0,0,0.95)] transition-all duration-300 sm:bottom-5 sm:right-5 sm:h-14 sm:w-14",
+          "group fixed bottom-4 z-[65] grid h-12 w-12 place-items-center overflow-hidden rounded-full border shadow-[0_24px_55px_-20px_rgba(0,0,0,0.95)] transition-all duration-300 sm:bottom-5 sm:h-14 sm:w-14",
+          onLeft ? "left-3 sm:left-5" : "right-3 sm:right-5",
           "bg-[linear-gradient(150deg,#2a2d33_0%,#15171b_52%,#050608_100%)] text-white",
           open ? "border-white/40" : "border-white/18 hover:-translate-y-0.5 hover:border-white/40",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950"
@@ -283,12 +306,20 @@ export function PortfolioAssistant({ onHire }: { onHire: () => void }) {
         <span className="pointer-events-none absolute inset-x-2 top-0 h-px bg-gradient-to-r from-transparent via-white/50 to-transparent" />
         {open ? <X className="relative h-5 w-5" /> : <Sparkles className="relative h-5 w-5" />}
         {!open && (
-          <span className="absolute bottom-1 right-1 h-2.5 w-2.5 rounded-full border-2 border-neutral-950 bg-sky-300" />
+          <span
+            className={cn("absolute bottom-1 h-2.5 w-2.5 rounded-full border-2 border-neutral-950", onLeft ? "left-1" : "right-1")}
+            style={{ background: accent }}
+          />
         )}
       </button>
 
       {open && (
-        <div className="fixed inset-x-3 bottom-[4.5rem] z-[65] sm:inset-x-auto sm:bottom-24 sm:right-5 sm:w-[410px]">
+        <div
+          className={cn(
+            "fixed inset-x-3 bottom-[4.5rem] z-[65] sm:inset-x-auto sm:bottom-24 sm:w-[410px]",
+            onLeft ? "sm:left-5" : "sm:right-5"
+          )}
+        >
           <div
             className={cn(
               "relative flex h-[min(78vh,620px)] flex-col overflow-hidden rounded-3xl border border-white/12 bg-[linear-gradient(170deg,#14171c_0%,#0a0c10_48%,#05070a_100%)] text-neutral-100 shadow-[0_50px_120px_-32px_rgba(0,0,0,1)] backdrop-blur-2xl",
@@ -296,7 +327,20 @@ export function PortfolioAssistant({ onHire }: { onHire: () => void }) {
             )}
             role="dialog"
             aria-label="Portfolio AI assistant"
+            onDragOver={(event) => {
+              event.preventDefault();
+              if (available && !busy) setDragging(true);
+            }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={handleDrop}
           >
+            {dragging && (
+              <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center border-2 border-dashed border-white/50 bg-black/70 backdrop-blur-sm">
+                <p className="flex items-center gap-2 text-[11px] uppercase tracking-[0.16em] text-white/80">
+                  <Paperclip className="h-4 w-4" /> Drop files to attach
+                </p>
+              </div>
+            )}
             <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/45 to-transparent" />
             <span className="pointer-events-none absolute -left-12 -top-16 h-44 w-44 rounded-full bg-sky-300/10 blur-3xl" />
             <span className="pointer-events-none absolute inset-0 opacity-[0.045] [background-image:radial-gradient(rgba(255,255,255,0.9)_0.5px,transparent_0.5px)] [background-size:3px_3px]" />
@@ -307,16 +351,13 @@ export function PortfolioAssistant({ onHire }: { onHire: () => void }) {
                   <Bot className="h-4 w-4" />
                 </span>
                 <div>
-                  <p className="text-[13px] font-semibold tracking-tight text-white">Portfolio Assistant</p>
+                  <p className="text-[13px] font-semibold tracking-tight text-white">{assistantName}</p>
                   <p className="mt-0.5 flex items-center gap-1.5 text-[9px] uppercase tracking-[0.16em] text-white/55">
                     <span
-                      className={cn(
-                        "h-1.5 w-1.5 rounded-full",
-                        available ? "bg-sky-300" : "bg-amber-400"
-                      )}
-                      style={available ? { animation: "pulse 2.4s ease-in-out infinite" } : undefined}
+                      className={cn("h-1.5 w-1.5 rounded-full", !available && "bg-amber-400")}
+                      style={available ? { background: accent, animation: "pulse 2.4s ease-in-out infinite" } : undefined}
                     />
-                    {statusLabel}
+                    {correspondence}
                   </p>
                 </div>
               </div>
@@ -356,10 +397,7 @@ export function PortfolioAssistant({ onHire }: { onHire: () => void }) {
             <div className="relative flex-1 space-y-3 overflow-y-auto px-4 py-4">
               {messages.length === 0 && (
                 <div className="rounded-2xl border border-white/12 bg-white/[0.04] p-4">
-                  <p className="text-[12.5px] leading-relaxed text-white/90">
-                    Hi, I&apos;m the portfolio assistant for GurSimar. Ask about services, experience,
-                    software or how to start a project.
-                  </p>
+                  <p className="text-[12.5px] leading-relaxed text-white/90">{welcome}</p>
                   <p className="mt-2 text-[10px] leading-relaxed text-white/55">
                     I answer from the published portfolio and point to the Hire Me form or direct chat for anything private.
                   </p>
@@ -550,7 +588,7 @@ export function PortfolioAssistant({ onHire }: { onHire: () => void }) {
                     }
                   }}
                   rows={1}
-                  placeholder={available ? "Ask about services, experience, hiring…" : "Assistant unavailable"}
+                  placeholder={available ? placeholder : "Assistant unavailable"}
                   disabled={!available || busy}
                   className="max-h-28 min-h-[44px] flex-1 resize-none rounded-xl border border-white/18 bg-black/50 px-3.5 py-2.5 text-[12px] text-white outline-none transition-colors placeholder:text-white/35 focus:border-sky-300/60 focus:bg-black/70 disabled:cursor-not-allowed disabled:opacity-55"
                 />

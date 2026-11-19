@@ -2,7 +2,7 @@
 // Regenerate with: node scripts/build-schema.mjs
 
 export const SCHEMA_STATEMENTS: readonly string[] = [
-  "CREATE TABLE IF NOT EXISTS projects (\n  id TEXT PRIMARY KEY,\n  kind TEXT NOT NULL CHECK (kind IN ('graphic', 'video')),\n  title TEXT NOT NULL,\n  description TEXT NOT NULL DEFAULT '',\n  category TEXT NOT NULL,\n  status TEXT NOT NULL DEFAULT 'published' CHECK (status IN ('published', 'draft')),\n  asset_key TEXT NOT NULL,\n  asset_type TEXT NOT NULL DEFAULT '',\n  asset_size INTEGER NOT NULL DEFAULT 0,\n  asset_hash TEXT,\n  thumb_key TEXT,\n  thumb_type TEXT,\n  sort_order INTEGER NOT NULL DEFAULT 0,\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n);",
+  "CREATE TABLE IF NOT EXISTS projects (\n  id TEXT PRIMARY KEY,\n  kind TEXT NOT NULL CHECK (kind IN ('graphic', 'video')),\n  title TEXT NOT NULL,\n  description TEXT NOT NULL DEFAULT '',\n  category TEXT NOT NULL,\n  status TEXT NOT NULL DEFAULT 'published' CHECK (status IN ('published', 'draft')),\n  asset_key TEXT NOT NULL,\n  asset_type TEXT NOT NULL DEFAULT '',\n  asset_size INTEGER NOT NULL DEFAULT 0,\n  asset_hash TEXT,\n  thumb_key TEXT,\n  thumb_type TEXT,\n  sort_order INTEGER NOT NULL DEFAULT 0,\n  display_ratio TEXT,\n  asset_width INTEGER,\n  asset_height INTEGER,\n  duration_seconds REAL,\n  source_url TEXT,\n  thumb_style TEXT,\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n);",
   "CREATE INDEX IF NOT EXISTS idx_projects_public ON projects (status, kind, category);",
   "CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_asset_hash ON projects (asset_hash);",
   "CREATE TABLE IF NOT EXISTS upload_fingerprints (\n  hash TEXT PRIMARY KEY,\n  key TEXT NOT NULL,\n  created_at TEXT NOT NULL\n);",

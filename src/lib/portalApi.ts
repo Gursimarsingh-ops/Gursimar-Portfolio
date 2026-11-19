@@ -180,6 +180,17 @@ export interface AiStatus {
   provider: string;
   model: string;
   vision?: boolean;
+  assistantName?: string;
+  welcomeMessage?: string;
+  placeholder?: string;
+  availability?: "online" | "away" | "offline";
+  appearance?: {
+    theme: "dark" | "light";
+    accent: string;
+    position: "left" | "right";
+    welcomeAnimation: boolean;
+    buttonLabel: string;
+  };
   limits: { messageChars: number; files: number; imageBytes: number; totalBytes: number };
 }
 

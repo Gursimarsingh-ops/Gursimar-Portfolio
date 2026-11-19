@@ -653,7 +653,8 @@ export function MediaManager({ kind }: { kind: ProjectKind }) {
     setError(null);
     try {
       const [result] = await Promise.all([api.projects(kind), api.status().catch(() => null)]);
-      setProjects(result.projects.filter((project) => project.kind === kind));
+      // External video links are managed in the dedicated Video Link Manager.
+      setProjects(result.projects.filter((project) => project.kind === kind && !project.sourceUrl));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load this collection.");
     } finally {

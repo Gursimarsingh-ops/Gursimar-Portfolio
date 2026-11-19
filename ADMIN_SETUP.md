@@ -2,24 +2,28 @@
 
 The private dashboard lives at `/admin` and is backed by the same backend that serves
 the public site (Cloudflare Pages Functions in production, the bound Worker locally).
-Data lives in D1 (SQL), media and uploads in R2, and every admin route re-validates a
-server-side session. The vault entrance is at `/security`.
+Data lives in D1 (SQL), media and uploads in a private Backblaze B2 bucket (S3-compatible
+API, signed server-side), and every admin route re-validates a server-side session. The
+vault entrance is at `/security`. Cloudflare R2 is **not** used and is not required to
+deploy.
 
 ## Features and where they live
 
 | Feature | Public surface | Admin surface | Storage |
 | --- | --- | --- | --- |
-| Hire Me / Project Inquiry | `ProjectInquiryDialog` → `POST /api/requests` | Requests Received, Client Details | `client_requests`, `request_files`, R2 `requests/…` |
+| Hire Me / Project Inquiry | `ProjectInquiryDialog` → `POST /api/requests` | Requests Received, Client Details | `client_requests`, `request_files`, B2 `requests/…` |
 | Direct chat | "Talk Directly With GurSimar" → `/api/chat/*` | Live Conversations, availability switch | `conversations`, `messages` |
-| AI assistant | floating assistant → `/api/ai/chat` | AI Assistant Settings | `ai_threads`, `ai_messages`, R2 `ai/…` |
-| Portfolio uploads | public gallery | Portfolio Management | `projects`, `upload_fingerprints`, R2 |
+| AI assistant | floating assistant → `/api/ai/chat` | AI Assistant Settings | `ai_threads`, `ai_messages`, B2 `ai/…` |
+| Portfolio uploads | public gallery | Portfolio Management | `projects`, `upload_fingerprints`, B2 |
 | Maintenance | full-screen page from `/api/site/status` | Website Maintenance Mode | `settings` |
 | Security | vault at `/security` | Security Settings | `sessions`, `settings` |
 
 ## Prerequisites
 
 1. Node 20+, dependencies installed with `npm install` (or `bun install`).
-2. A Cloudflare account with Workers, D1 and R2 enabled (`wrangler login`).
+2. A Cloudflare account with Workers and D1 enabled (`wrangler login`) — R2 does not
+   need to be activated. A Backblaze B2 bucket with an application key is required for
+   media uploads.
 3. An OpenAI-compatible chat-completions API key if the AI assistant should answer.
    Without a key the assistant shows a clear "not configured" message and never fakes
    answers.
@@ -48,30 +52,35 @@ Worker secrets (never committed, never sent to the browser):
 | `ADMIN_EMAIL` | Administrator sign-in email. Set to `gursimarsingh9390@gmail.com`. |
 | `ADMIN_PASSWORD_HASH` | `pbkdf2:100000:<salt>:<hash>` from `scripts/hash-admin-password.mjs`. |
 | `AI_API_KEY` | NVIDIA NIM API key (server-side only; dashboard storage is preferred). |
+| `B2_APPLICATION_KEY_ID` | Backblaze application key id (server-side only). |
+| `B2_APPLICATION_KEY` | Backblaze application key (server-side only). |
 
 Plain Worker variables / bindings:
 
 | Name | Default | Notes |
 | --- | --- | --- |
 | `AI_API_URL` | `https://integrate.api.nvidia.com/v1/chat/completions` | Any OpenAI-compatible endpoint. |
-| `AI_MODEL` | `google/gemma-4-31b-it` | Overridable per deployment from AI configuration. |
+| `AI_MODEL` | `minimax-m3.1-flash` | Overridable per deployment from AI configuration. |
 | `AI_PROVIDER` | `nvidia-nim` | Label only; shown in the dashboard. |
 | `DB` | `wrangler.toml` D1 binding | All relational data. |
-| `FILES` | `wrangler.toml` R2 binding | Portfolio media, request attachments, AI uploads. |
+| `B2_BUCKET_NAME` | `gursimar-portfolio` | Private B2 bucket (S3-compatible API). |
+| `B2_REGION` | `us-east-005` | B2 region used for SigV4 signing. |
+| `B2_ENDPOINT` | `https://s3.us-east-005.backblazeb2.com` | B2 S3 endpoint. |
 
 `.dev.vars.example` documents the local equivalents. `.dev.vars` is git-ignored.
 
 ## Shared backend (localhost and production are the same system)
 
-There is exactly one database and one media bucket. `wrangler.toml` marks both
-bindings `remote = true`, so `npm run dev:api` runs the Worker locally but reads and
-writes the **deployed** D1 database and R2 bucket. Anything you upload, edit, delete
-or toggle on localhost lands in production, and the live site reads the same rows.
+There is exactly one database and one media bucket. `wrangler.worker.toml` marks the D1
+binding `remote = true` and points at the same Backblaze B2 bucket, so `npm run dev:api`
+runs the Worker locally but reads and writes the **deployed** D1 database and B2 bucket.
+Anything you upload, edit, delete or toggle on localhost lands in production, and the
+live site reads the same rows and objects.
 
 ```
 browser :5173 ─┐
                ├─ /api, /media ─► Worker (wrangler dev) ─► D1 portfolio-db (remote)
-public domain ─┘                                    └─► R2 portfolio-media (remote)
+public domain ─┘                          └─► Backblaze B2 gursimar-portfolio (private)
 ```
 
 `wrangler dev` does **not** copy production secrets, so the administrator credentials
@@ -130,13 +139,13 @@ backend therefore ships *with* the Pages project as Pages Functions:
 
 ```
 functions/api/[[path]].ts    -> /api/*    (projects, admin, requests, chat, AI, health)
-functions/media/[[path]].ts  -> /media/*  (R2 images and videos)
+functions/media/[[path]].ts  -> /media/*  (Backblaze B2 images and videos)
 public/_routes.json          -> only those prefixes run as Functions
 ```
 
 Both adapters call the same `handleBackendRequest()` in `worker/index.ts`, so the
 public site, `/admin` and `/security` on the live domain use the identical code and the
-identical D1 + R2 instance as localhost. `wrangler.toml` is the Pages config
+identical D1 + B2 store as localhost. `wrangler.toml` is the Pages config
 (`pages_build_output_dir = "./dist"`); `wrangler.worker.toml` keeps the standalone
 Worker target used by `npm run dev:api`.
 
@@ -145,16 +154,16 @@ One-time setup:
 ```bash
 npx wrangler login
 npx wrangler d1 create portfolio-db          # copy database_id into wrangler.toml
-npx wrangler r2 bucket create portfolio-media
 ```
 
 Then in the Pages dashboard, for the **Production** environment:
 
-1. Settings → Functions → Bindings: `DB` = D1 `portfolio-db`, `FILES` = R2
-   `portfolio-media` (the same names as `wrangler.toml`).
-2. Settings → Variables and Secrets: `ADMIN_EMAIL`, `ADMIN_PASSWORD_HASH`,
-   optionally `AI_API_KEY`. These are the only place the production password hash
-   and API key exist — never the repo.
+1. Settings → Functions → Bindings: `DB` = D1 `portfolio-db` only. Do **not** add an
+   R2 binding: a missing R2 bucket fails the entire Function upload.
+2. Settings → Variables and Secrets: plain variables `B2_BUCKET_NAME`, `B2_REGION`,
+   `B2_ENDPOINT`; secrets `B2_APPLICATION_KEY_ID`, `B2_APPLICATION_KEY`,
+   `ADMIN_EMAIL`, `ADMIN_PASSWORD_HASH`, optionally `AI_API_KEY`. These are the only
+   place the production password hash, B2 keys and AI key exist — never the repo.
 3. Settings → Builds & deployments: build command `npm run build`, output `dist`,
    production branch `main`.
 
@@ -186,7 +195,7 @@ reach `main` to be live.
 
 ```bash
 npm run migrate:cloudflare -- --dry-run   # list rows and objects that would move
-npm run migrate:cloudflare                # schema + INSERT OR IGNORE rows + R2 uploads
+npm run migrate:cloudflare                # schema + INSERT OR IGNORE database rows
 ```
 
 Production rows are never overwritten; only missing records are added. Objects keep
@@ -240,7 +249,7 @@ Then open Security Settings → "Revoke every session".
 - Every request appears in Requests Received with status, private notes, attachment
   download links and previous requests from the same email.
 - Statuses: `new`, `reviewed`, `discussion`, `accepted`, `rejected`.
-- Deleting a request removes its rows and its R2 objects.
+- Deleting a request removes its rows and its B2 objects.
 
 ## Live chat
 

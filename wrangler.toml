@@ -7,11 +7,13 @@
 # serves ./dist as static assets and runs the backend through Pages Functions.
 #
 #   functions/api/[[path]].ts   -> /api/*   (admin, inquiries, chat, AI, health)
-#   functions/media/[[path]].ts -> /media/* (R2 images and videos)
+#   functions/media/[[path]].ts -> /media/* (Backblaze B2 images and videos)
 #
-# Both bindings below MUST also exist on the Pages project under
-# Settings -> Functions -> Bindings. They point at the same D1 database and R2
-# bucket the local Worker uses, so localhost and production share one dataset.
+# There is deliberately NO R2 binding: Cloudflare R2 is not enabled on this
+# account and requiring it made every Pages deployment fail. All object storage
+# goes to the private Backblaze B2 bucket through the S3-compatible API, signed
+# server-side inside the Worker. Cloudflare only needs the D1 binding below (or
+# the D1 binding configured under Settings -> Functions -> Bindings).
 # ---------------------------------------------------------------------------
 
 name = "gursimar-portfolio"
@@ -25,12 +27,6 @@ database_name = "portfolio-db"
 # The placeholder keeps `npm run build` honest: it makes `npm run deploy:check`
 # fail instead of shipping a site whose dashboard writes nowhere.
 database_id = "00000000-0000-4000-8000-000000000000"
-
-# Kept for assets uploaded before the B2 migration and for client request
-# attachments. Portfolio media is written to B2 when its credentials are set.
-[[r2_buckets]]
-binding = "FILES"
-bucket_name = "portfolio-media"
 
 [vars]
 # Non-secret configuration. ADMIN_EMAIL, ADMIN_PASSWORD_HASH, AI_API_KEY and the

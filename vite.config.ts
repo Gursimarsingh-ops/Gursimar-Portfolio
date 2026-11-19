@@ -6,7 +6,7 @@ import path from "path";
  * Where the browser's /api and /media requests go.
  *
  * - default: the local Worker started by `npm run dev:api`, which itself is
- *   bound to the shared production D1 + R2 (see wrangler.toml).
+ *   bound to the shared production D1 and Backblaze B2 store (see wrangler.toml).
  * - `API_PROXY_TARGET=https://your-worker.workers.dev` (in .env.local or the
  *   shell) sends requests straight to the deployed Worker instead, so the dev
  *   UI and the live site use literally the same backend instance.

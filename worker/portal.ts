@@ -1,4 +1,5 @@
 import { parseCookies, SESSION_COOKIE, sha256Hex } from "./auth";
+import { deleteObject, putObject, readObject, readObjectBytes } from "./storage";
 import {
   AI_DEFAULT_API_URL,
   AI_DEFAULT_MODEL,
@@ -15,7 +16,12 @@ import {
 
 export interface PortalEnv {
   DB: D1Database;
-  FILES: R2Bucket;
+  /* Private Backblaze B2 bucket (S3-compatible API). Server-side only; no R2 binding. */
+  B2_APPLICATION_KEY_ID?: string;
+  B2_APPLICATION_KEY?: string;
+  B2_BUCKET_NAME?: string;
+  B2_REGION?: string;
+  B2_ENDPOINT?: string;
   ADMIN_EMAIL?: string;
   ADMIN_PASSWORD_HASH?: string;
   AI_API_URL?: string;
@@ -154,10 +160,75 @@ async function readAvailability(env: PortalEnv): Promise<{ online: boolean; upda
   return { online: row?.value === "online", updatedAt: row?.updatedAt ?? null };
 }
 
+interface AiErrorLog {
+  at: string;
+  message: string;
+}
+
+interface AiAppearance {
+  theme: "dark" | "light";
+  accent: string;
+  position: "left" | "right";
+  welcomeAnimation: boolean;
+  buttonLabel: string;
+}
+
+const AI_APPEARANCE_DEFAULTS: AiAppearance = {
+  theme: "dark",
+  accent: "#7dd3fc",
+  position: "right",
+  welcomeAnimation: true,
+  buttonLabel: "Portfolio Assistant",
+};
+
+function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
+  const number = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.min(max, Math.max(min, number));
+}
+
+function readAppearance(value: unknown): AiAppearance {
+  const source = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  const accent = typeof source.accent === "string" && /^#[0-9a-f]{6}$/i.test(source.accent) ? source.accent : "";
+  return {
+    theme: source.theme === "light" ? "light" : "dark",
+    accent: accent || AI_APPEARANCE_DEFAULTS.accent,
+    position: source.position === "left" ? "left" : "right",
+    welcomeAnimation: source.welcomeAnimation !== false,
+    buttonLabel: (typeof source.buttonLabel === "string" ? source.buttonLabel.trim().slice(0, 40) : "") || AI_APPEARANCE_DEFAULTS.buttonLabel,
+  };
+}
+
+function readErrorLog(value: unknown): AiErrorLog[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") return null;
+      const record = entry as Record<string, unknown>;
+      const message = typeof record.message === "string" ? record.message.trim().slice(0, 400) : "";
+      const at = typeof record.at === "string" ? record.at : "";
+      return message ? { at, message } : null;
+    })
+    .filter((entry): entry is AiErrorLog => Boolean(entry))
+    .slice(0, 15);
+}
+
 interface AiSettings {
   enabled: boolean;
   model: string;
   provider: string;
+  /** Chat presentation and behavior (public, editable in the dashboard). */
+  assistantName: string;
+  welcomeMessage: string;
+  placeholder: string;
+  availability: "online" | "away" | "offline";
+  temperature: number;
+  maxTokens: number;
+  timeoutMs: number;
+  appearance: AiAppearance;
+  /** Recent provider failures, newest first (server-side diagnostic log). */
+  errors: AiErrorLog[];
+  failedRequests: number;
   /** Custom endpoint stored by the administrator. Never returned to the browser. */
   apiUrl: string;
   /** API key stored server-side in D1. Never returned to the browser. */
@@ -196,6 +267,19 @@ async function readAiSettings(env: PortalEnv): Promise<AiSettings> {
           : AI_DEFAULT_PROVIDER,
     apiUrl: typeof parsed.apiUrl === "string" ? parsed.apiUrl : "",
     apiKey: typeof parsed.apiKey === "string" ? parsed.apiKey : "",
+    assistantName: cleanText(parsed.assistantName, 60) || "Portfolio Assistant",
+    welcomeMessage:
+      (typeof parsed.welcomeMessage === "string" ? parsed.welcomeMessage.trim().slice(0, 600) : "") ||
+      "Hi, I'm the portfolio assistant for GurSimar Singh. Ask me about his services, experience, software or how to start a project.",
+    placeholder: cleanText(parsed.placeholder, 120) || "Ask about services, experience or hiring…",
+    availability:
+      parsed.availability === "away" || parsed.availability === "offline" ? parsed.availability : "online",
+    temperature: clampNumber(parsed.temperature, 0, 2, 0.5),
+    maxTokens: Math.round(clampNumber(parsed.maxTokens, 64, 4000, 700)),
+    timeoutMs: Math.round(clampNumber(parsed.timeoutMs, 5000, 120000, 45000)),
+    appearance: readAppearance(parsed.appearance),
+    errors: readErrorLog(parsed.errors),
+    failedRequests: Math.max(0, Math.round(clampNumber(parsed.failedRequests, 0, 1_000_000, 0))),
     knowledge: typeof parsed.knowledge === "string" ? parsed.knowledge : "",
     updatedAt: row?.updatedAt ?? null,
     lastTestAt: typeof parsed.lastTestAt === "string" ? parsed.lastTestAt : null,
@@ -234,6 +318,16 @@ async function writeAiSettings(env: PortalEnv, settings: AiSettings): Promise<vo
     apiUrl: settings.apiUrl,
     apiKey: settings.apiKey,
     knowledge: settings.knowledge,
+    assistantName: settings.assistantName,
+    welcomeMessage: settings.welcomeMessage,
+    placeholder: settings.placeholder,
+    availability: settings.availability,
+    temperature: settings.temperature,
+    maxTokens: settings.maxTokens,
+    timeoutMs: settings.timeoutMs,
+    appearance: settings.appearance,
+    errors: settings.errors,
+    failedRequests: settings.failedRequests,
     lastTestAt: settings.lastTestAt,
     lastSuccessAt: settings.lastSuccessAt,
     lastError: settings.lastError,
@@ -253,6 +347,16 @@ function describeAi(env: PortalEnv, settings: AiSettings) {
       provider: settings.provider || AI_DEFAULT_PROVIDER,
       apiUrl: aiApiUrl(env, settings),
       knowledge: settings.knowledge,
+      assistantName: settings.assistantName,
+      welcomeMessage: settings.welcomeMessage,
+      placeholder: settings.placeholder,
+      availability: settings.availability,
+      temperature: settings.temperature,
+      maxTokens: settings.maxTokens,
+      timeoutMs: settings.timeoutMs,
+      appearance: settings.appearance,
+      errors: settings.errors,
+      failedRequests: settings.failedRequests,
       updatedAt: settings.updatedAt,
       lastTestAt: settings.lastTestAt,
       lastSuccessAt: settings.lastSuccessAt,
@@ -381,10 +485,14 @@ async function storeFiles(
     }
 
     const key = `${prefix}${crypto.randomUUID()}.${rule.ext}`;
-    await env.FILES.put(key, buffer, {
-      httpMetadata: { contentType: type },
-      customMetadata: { originalName: file.name.slice(0, 120) },
-    });
+    try {
+      await putObject(env, key, buffer, { contentType: type, originalName: file.name.slice(0, 120) });
+    } catch (error) {
+      return {
+        error: error instanceof Error ? error.message : "File storage is unavailable.",
+        status: 502,
+      };
+    }
     stored.push({ key, name: file.name.slice(0, 160), type, size: file.size });
   }
 
@@ -525,7 +633,7 @@ async function createRequest(request: Request, env: PortalEnv): Promise<Response
           .run();
       }
     } catch (error) {
-      await env.FILES.delete(result.stored.map((file) => file.key)).catch(() => undefined);
+      await deleteObject(env, result.stored.map((file) => file.key)).catch(() => undefined);
       throw error;
     }
   } else {
@@ -690,6 +798,11 @@ async function aiStatus(env: PortalEnv): Promise<Response> {
     provider: settings.provider || AI_DEFAULT_PROVIDER,
     model,
     vision: modelSupportsVision(model),
+    assistantName: settings.assistantName,
+    welcomeMessage: settings.welcomeMessage,
+    placeholder: settings.placeholder,
+    availability: settings.availability,
+    appearance: settings.appearance,
     limits: {
       messageChars: 4000,
       files: 5,
@@ -736,7 +849,7 @@ async function generateReply(
     {
       role: "system",
       content:
-        `${AI_GUARDRAILS}\n\nPORTFOLIO KNOWLEDGE (the only facts you may rely on):\n${PORTFOLIO_KNOWLEDGE}` +
+        `Your name is ${settings.assistantName}. ${AI_GUARDRAILS}\n\nPORTFOLIO KNOWLEDGE (the only facts you may rely on):\n${PORTFOLIO_KNOWLEDGE}` +
         (extraKnowledge
           ? `\n\nADDITIONAL KNOWLEDGE (maintained by GurSimar in the dashboard; treat as facts):\n${extraKnowledge}`
           : ""),
@@ -767,7 +880,7 @@ async function generateReply(
   }
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 45_000);
+  const timer = setTimeout(() => controller.abort(), settings.timeoutMs);
   try {
     const response = await fetch(apiUrl, {
       method: "POST",
@@ -775,7 +888,12 @@ async function generateReply(
         "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`,
       },
-      body: JSON.stringify({ model, messages, temperature: 0.5, max_tokens: 700 }),
+      body: JSON.stringify({
+        model,
+        messages,
+        temperature: settings.temperature,
+        max_tokens: settings.maxTokens,
+      }),
       signal: controller.signal,
     });
 
@@ -864,9 +982,9 @@ async function aiChat(request: Request, env: PortalEnv): Promise<Response> {
     for (const file of result.stored) {
       attachmentRows.push({ name: file.name, type: file.type, key: file.key, size: file.size });
       if (images.length < 4 && file.type.startsWith("image/") && file.type !== "image/gif") {
-        const object = await env.FILES.get(file.key);
-        if (object) {
-          const bytes = new Uint8Array(await object.arrayBuffer());
+        const buffer = await readObjectBytes(env, file.key).catch(() => null);
+        if (buffer) {
+          const bytes = new Uint8Array(buffer);
           if (bytes.byteLength <= 8 * 1024 * 1024) {
             images.push({ type: file.type, base64: bytesToBase64(bytes) });
           }
@@ -884,9 +1002,8 @@ async function aiChat(request: Request, env: PortalEnv): Promise<Response> {
     const isPdf = file.type === "application/pdf";
     if (!isText && !isPdf) continue;
     try {
-      const object = await env.FILES.get(file.key);
-      if (!object) continue;
-      const buffer = await object.arrayBuffer();
+      const buffer = await readObjectBytes(env, file.key);
+      if (!buffer) continue;
       if (buffer.byteLength > 15 * 1024 * 1024) continue;
       const extracted = isPdf
         ? await extractPdfText(buffer)
@@ -953,7 +1070,12 @@ async function aiChat(request: Request, env: PortalEnv): Promise<Response> {
         : error instanceof Error
           ? error.message
           : "unknown";
-    await writeAiSettings(env, { ...settings, lastError: detail.slice(0, 400) }).catch(() => undefined);
+    await writeAiSettings(env, {
+      ...settings,
+      lastError: detail.slice(0, 400),
+      failedRequests: settings.failedRequests + 1,
+      errors: [{ at: nowIso(), message: detail.slice(0, 400) }, ...settings.errors].slice(0, 15),
+    }).catch(() => undefined);
     console.error("AI request failed", detail);
     return fail(
       error instanceof AiProviderError
@@ -1131,7 +1253,7 @@ async function adminDeleteRequest(env: PortalEnv, id: string): Promise<Response>
   const deleted = await env.DB.prepare("DELETE FROM client_requests WHERE id = ?").bind(id).run();
   if (!deleted.meta.changes) return fail("Request not found.", 404);
 
-  if (keys.length) await env.FILES.delete(keys).catch(() => undefined);
+  if (keys.length) await deleteObject(env, keys).catch(() => undefined);
   return json({ ok: true });
 }
 
@@ -1141,7 +1263,7 @@ async function adminFile(env: PortalEnv, id: string): Promise<Response> {
     .first<{ key: string; name: string; type: string }>();
   if (!row) return new Response("Not found", { status: 404 });
 
-  const object = await env.FILES.get(row.key);
+  const object = await readObject(env, row.key).catch(() => null);
   if (!object) return new Response("Not found", { status: 404 });
 
   const safeName = row.name.replace(/[^\w.\- ]+/g, "_").slice(0, 120) || "attachment";
@@ -1346,7 +1468,15 @@ async function adminAvailability(request: Request, env: PortalEnv): Promise<Resp
 async function adminAiSettings(request: Request, env: PortalEnv): Promise<Response> {
   if (request.method === "GET") {
     const settings = await readAiSettings(env);
-    return json(describeAi(env, settings));
+    let usage = { conversations: 0, messages: 0 };
+    try {
+      const threads = await env.DB.prepare("SELECT COUNT(*) AS count FROM ai_threads").first<{ count: number }>();
+      const messages = await env.DB.prepare("SELECT COUNT(*) AS count FROM ai_messages").first<{ count: number }>();
+      usage = { conversations: threads?.count ?? 0, messages: messages?.count ?? 0 };
+    } catch {
+      /* usage is diagnostic only */
+    }
+    return json({ ...describeAi(env, settings), usage });
   }
 
   const body = await readJson<{
@@ -1357,6 +1487,14 @@ async function adminAiSettings(request: Request, env: PortalEnv): Promise<Respon
     apiKey?: unknown;
     clearApiKey?: unknown;
     knowledge?: unknown;
+    assistantName?: unknown;
+    welcomeMessage?: unknown;
+    placeholder?: unknown;
+    availability?: unknown;
+    temperature?: unknown;
+    maxTokens?: unknown;
+    timeoutMs?: unknown;
+    appearance?: unknown;
   }>(request);
   if (!body) return fail("Invalid JSON body.");
 
@@ -1391,6 +1529,36 @@ async function adminAiSettings(request: Request, env: PortalEnv): Promise<Respon
     apiUrl,
     apiKey,
     knowledge,
+    assistantName:
+      body.assistantName !== undefined ? cleanText(body.assistantName, 60) || current.assistantName : current.assistantName,
+    welcomeMessage:
+      typeof body.welcomeMessage === "string"
+        ? body.welcomeMessage.trim().slice(0, 600) || current.welcomeMessage
+        : current.welcomeMessage,
+    placeholder:
+      body.placeholder !== undefined ? cleanText(body.placeholder, 120) || current.placeholder : current.placeholder,
+    availability:
+      body.availability === "online" || body.availability === "away" || body.availability === "offline"
+        ? body.availability
+        : current.availability,
+    temperature:
+      body.temperature !== undefined
+        ? Math.round(clampNumber(body.temperature, 0, 2, current.temperature) * 100) / 100
+        : current.temperature,
+    maxTokens:
+      body.maxTokens !== undefined
+        ? Math.round(clampNumber(body.maxTokens, 64, 4000, current.maxTokens))
+        : current.maxTokens,
+    timeoutMs:
+      body.timeoutMs !== undefined
+        ? Math.round(clampNumber(body.timeoutMs, 5000, 120000, current.timeoutMs))
+        : current.timeoutMs,
+    appearance:
+      body.appearance !== undefined
+        ? readAppearance({ ...current.appearance, ...(typeof body.appearance === "object" ? body.appearance : {}) })
+        : current.appearance,
+    errors: current.errors,
+    failedRequests: current.failedRequests,
     updatedAt: current.updatedAt,
     lastTestAt: current.lastTestAt,
     lastSuccessAt: current.lastSuccessAt,
@@ -1458,10 +1626,13 @@ async function adminAiTest(request: Request, env: PortalEnv): Promise<Response> 
     if (!response.ok) {
       const detail = providerErrorDetail(raw);
       const saved = await readAiSettings(env);
+      const logMessage = `Test failed · HTTP ${response.status}: ${detail}`.slice(0, 400);
       await writeAiSettings(env, {
         ...saved,
         lastTestAt: nowIso(),
-        lastError: `Test failed · HTTP ${response.status}: ${detail}`.slice(0, 400),
+        lastError: logMessage,
+        failedRequests: saved.failedRequests + 1,
+        errors: [{ at: nowIso(), message: logMessage }, ...saved.errors].slice(0, 15),
       }).catch(() => undefined);
       return json({
         ok: false,
@@ -1525,10 +1696,79 @@ async function adminAiTest(request: Request, env: PortalEnv): Promise<Response> 
       ...saved,
       lastTestAt: nowIso(),
       lastError: message.slice(0, 400),
+      failedRequests: saved.failedRequests + 1,
+      errors: [{ at: nowIso(), message: message.slice(0, 400) }, ...saved.errors].slice(0, 15),
     }).catch(() => undefined);
     return json({ ok: false, status: null, latencyMs, endpoint: url, model, message });
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/** Administrator test message: a real model round-trip through the saved configuration. */
+async function adminAiChatTest(request: Request, env: PortalEnv): Promise<Response> {
+  if (!originAllowed(request)) return fail("Invalid origin", 403);
+
+  const body = await readJson<{ message?: unknown }>(request);
+  const message = cleanText(body?.message, 4000);
+  if (!message) return fail("Type a test message first.");
+
+  const settings = await readAiSettings(env);
+  const model = aiModel(env, settings);
+  if (!aiApiKey(env, settings)) {
+    return json({
+      ok: false,
+      reply: null,
+      latencyMs: 0,
+      model,
+      message: "No API key is stored yet. Save your NVIDIA key in API Configuration and try again.",
+    });
+  }
+
+  const started = Date.now();
+  try {
+    const reply = await generateReply(env, settings, [], message, []);
+    const latencyMs = Date.now() - started;
+    const saved = await readAiSettings(env);
+    await writeAiSettings(env, {
+      ...saved,
+      lastSuccessAt: nowIso(),
+      lastError: null,
+      lastLatencyMs: latencyMs,
+    }).catch(() => undefined);
+    return json({
+      ok: true,
+      reply,
+      latencyMs,
+      model,
+      message: `The model responded in ${latencyMs} ms.`,
+    });
+  } catch (error) {
+    const latencyMs = Date.now() - started;
+    const detail =
+      error instanceof AiProviderError
+        ? `HTTP ${error.status}: ${error.detail}`
+        : error instanceof Error
+          ? error.message
+          : "unknown";
+    const saved = await readAiSettings(env);
+    await writeAiSettings(env, {
+      ...saved,
+      lastError: detail.slice(0, 400),
+      failedRequests: saved.failedRequests + 1,
+      errors: [{ at: nowIso(), message: detail.slice(0, 400) }, ...saved.errors].slice(0, 15),
+    }).catch(() => undefined);
+    return json({
+      ok: false,
+      reply: null,
+      latencyMs,
+      model,
+      message:
+        error instanceof AiProviderError
+          ? "The provider rejected the test message. Check the key, model and endpoint below."
+          : "The model did not return a reply.",
+      diagnostics: detail,
+    });
   }
 }
 
@@ -1691,6 +1931,9 @@ export async function handlePortalApi(
   }
   if (path === "/api/admin/ai-settings/test" && method === "POST") {
     return adminAiTest(request, env);
+  }
+  if (path === "/api/admin/ai-settings/chat" && method === "POST") {
+    return adminAiChatTest(request, env);
   }
   if (path === "/api/admin/security" && method === "GET") return adminSecurity(request, env);
   if (path === "/api/admin/security/revoke" && method === "POST") return adminRevokeSessions(request, env);

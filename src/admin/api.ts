@@ -12,6 +12,10 @@ export interface AdminProject {
   thumbUrl: string | null;
   assetType: string;
   assetSize: number;
+  /** Set for externally hosted videos (YouTube/Vimeo/direct file). */
+  sourceUrl: string | null;
+  /** Thumbnail crop/filter presentation. */
+  thumbStyle: Record<string, unknown> | null;
   sortOrder: number;
   displayRatio: string;
   assetWidth: number | null;
@@ -43,7 +47,7 @@ export interface StorageStatus {
     objects: number;
     bytes: number;
     /** "backblaze-b2" when the private B2 bucket is wired up. */
-    provider?: "backblaze-b2" | "r2" | "none";
+    provider?: "backblaze-b2" | "none";
     bucket?: string | null;
     region?: string | null;
   };
@@ -136,6 +140,19 @@ export interface ClientRecord {
   lastConversationAt: string | null;
 }
 
+export interface AiAppearanceSettings {
+  theme: "dark" | "light";
+  accent: string;
+  position: "left" | "right";
+  welcomeAnimation: boolean;
+  buttonLabel: string;
+}
+
+export interface AiErrorEntry {
+  at: string;
+  message: string;
+}
+
 export interface AiSettingsResponse {
   settings: {
     enabled: boolean;
@@ -143,6 +160,16 @@ export interface AiSettingsResponse {
     provider: string;
     apiUrl: string;
     knowledge: string;
+    assistantName: string;
+    welcomeMessage: string;
+    placeholder: string;
+    availability: "online" | "away" | "offline";
+    temperature: number;
+    maxTokens: number;
+    timeoutMs: number;
+    appearance: AiAppearanceSettings;
+    errors: AiErrorEntry[];
+    failedRequests: number;
     updatedAt: string | null;
     lastTestAt: string | null;
     lastSuccessAt: string | null;
@@ -159,6 +186,17 @@ export interface AiSettingsResponse {
   defaultProvider: string;
   envModel: string | null;
   providerEnv: string | null;
+  /** Only present on the administrator endpoint. */
+  usage?: { conversations: number; messages: number };
+}
+
+export interface AiChatTestResult {
+  ok: boolean;
+  reply: string | null;
+  latencyMs: number;
+  model: string;
+  message: string;
+  diagnostics?: string;
 }
 
 export interface AiTestResult {
@@ -324,13 +362,16 @@ export const api = {
     title: string;
     description: string;
     category: string;
-    assetKey: string;
+    assetKey?: string;
     thumbKey?: string | null;
     status?: ProjectStatus;
     displayRatio?: string;
     assetWidth?: number | null;
     assetHeight?: number | null;
     durationSeconds?: number | null;
+    sourceUrl?: string;
+    thumbStyle?: Record<string, unknown> | null;
+    sortOrder?: number;
   }) =>
     request<{ project: AdminProject }>("/api/admin/projects", {
       method: "POST",
@@ -350,6 +391,9 @@ export const api = {
       assetWidth: number | null;
       assetHeight: number | null;
       durationSeconds: number | null;
+      sourceUrl: string;
+      thumbStyle: Record<string, unknown> | null;
+      sortOrder: number;
     }>
   ) =>
     request<{ project: AdminProject }>(`/api/admin/projects/${encodeURIComponent(id)}`, {
@@ -429,6 +473,14 @@ export const api = {
     model?: string;
     provider?: string;
     apiUrl?: string;
+    assistantName?: string;
+    welcomeMessage?: string;
+    placeholder?: string;
+    availability?: "online" | "away" | "offline";
+    temperature?: number;
+    maxTokens?: number;
+    timeoutMs?: number;
+    appearance?: Partial<AiAppearanceSettings>;
     apiKey?: string;
     clearApiKey?: boolean;
     knowledge?: string;
@@ -442,6 +494,12 @@ export const api = {
     request<AiTestResult>("/api/admin/ai-settings/test", {
       method: "POST",
       body: JSON.stringify(payload),
+    }),
+
+  testAiMessage: (message: string) =>
+    request<AiChatTestResult>("/api/admin/ai-settings/chat", {
+      method: "POST",
+      body: JSON.stringify({ message }),
     }),
 
   health: () => request<HealthInfo>("/api/admin/health"),

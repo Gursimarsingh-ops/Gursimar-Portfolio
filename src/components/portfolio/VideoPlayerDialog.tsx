@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { X } from "lucide-react";
+import { AlertTriangle, X } from "lucide-react";
+import { parseVideoSource } from "@/lib/video";
 
 interface Props {
   open: boolean;
@@ -7,6 +8,8 @@ interface Props {
   title: string;
   subtitle: string;
   videoUrl?: string | null;
+  /** Externally hosted video (YouTube/Vimeo/direct file). */
+  sourceUrl?: string | null;
   posterUrl?: string | null;
   description?: string;
   /** Optional stored aspect ratio, e.g. "9/16" from the dashboard. */
@@ -19,6 +22,7 @@ export function VideoPlayerDialog({
   title,
   subtitle,
   videoUrl,
+  sourceUrl,
   posterUrl,
   description,
   ratio,
@@ -28,6 +32,22 @@ export function VideoPlayerDialog({
 
   const pinned = ratio && ratio !== "auto" ? ratio.replace("/", " / ") : null;
   const aspect = pinned ?? (detected ? `${detected}` : "16 / 9");
+  const source = parseVideoSource(sourceUrl);
+  const ratioValue = (() => {
+    const [width, height] = aspect.split("/").map((part) => Number(part.trim()));
+    return width > 0 && height > 0 ? width / height : 16 / 9;
+  })();
+  const screenStyle =
+    ratioValue >= 1
+      ? { width: "100%", aspectRatio: String(ratioValue) }
+      : { height: "min(76vh, 640px)", maxWidth: "100%", aspectRatio: String(ratioValue) };
+
+  const external =
+    source.provider === "youtube" || source.provider === "vimeo"
+      ? source.embedUrl
+      : source.provider === "file"
+        ? source.embedUrl
+        : null;
 
   return (
     <div
@@ -52,7 +72,47 @@ export function VideoPlayerDialog({
           </button>
         </div>
 
-        {videoUrl ? (
+        {sourceUrl ? (
+          external && source.provider !== "file" ? (
+            <div className="grid place-items-center bg-black p-2">
+              <div className="relative mx-auto overflow-hidden rounded-md bg-black" style={screenStyle}>
+                <iframe
+                  src={external}
+                  title={title || "Video"}
+                  className="absolute inset-0 h-full w-full"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+                  allowFullScreen
+                  referrerPolicy="strict-origin-when-cross-origin"
+                  loading="lazy"
+                />
+              </div>
+            </div>
+          ) : external ? (
+            <div className="grid place-items-center bg-black p-2">
+              <div className="relative mx-auto overflow-hidden rounded-md bg-black" style={screenStyle}>
+                <video
+                  src={external}
+                  poster={posterUrl ?? undefined}
+                  controls
+                  playsInline
+                  preload="metadata"
+                  className="absolute inset-0 h-full w-full bg-black object-contain"
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="grid place-items-center bg-black px-6 py-16">
+              <div className="flex max-w-md flex-col items-center gap-2 text-center">
+                <AlertTriangle className="h-5 w-5 text-amber-300" />
+                <p className="text-sm text-white/80">This video link cannot be embedded.</p>
+                <p className="text-[11px] leading-relaxed text-white/45">
+                  Use a YouTube, Vimeo or direct MP4/WebM/MOV link. The stored address is:{" "}
+                  <span className="break-all font-mono text-[10px]">{sourceUrl}</span>
+                </p>
+              </div>
+            </div>
+          )
+        ) : videoUrl ? (
           <div className="grid place-items-center bg-black">
             <video
               src={videoUrl}

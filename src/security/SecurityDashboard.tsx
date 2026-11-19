@@ -26,6 +26,7 @@ import { GuardRobot } from "./GuardRobot";
 import { SirenBeacon, SirenRail } from "./SecuritySirens";
 import { SystemHealth } from "./SystemHealth";
 import { MediaManager } from "./MediaManager";
+import { VideoLinkManager } from "./VideoLinkManager";
 import { ArtistPhotoManager } from "./ArtistPhotoManager";
 import { AiConfigPanel } from "./AiConfigPanel";
 import { isVaultMuted, playAccessResult, playVaultUnlock, setVaultMuted } from "./vaultSound";
@@ -38,6 +39,7 @@ const SECTIONS = [
   { id: "artist-section", label: "Artist" },
   { id: "ai-section", label: "AI assistant" },
   { id: "media-section", label: "Media" },
+  { id: "video-links-section", label: "Video links" },
   { id: "health-section", label: "System health" },
   { id: "ops-section", label: "Operations" },
 ] as const;
@@ -767,6 +769,28 @@ export function SecurityDashboard() {
             <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 text-[11px] leading-relaxed text-white/40">
               Locked. Uploading, editing, reordering and publishing media requires an authenticated administrator
               session. Unseal the vault and sign in to manage the portfolio.
+            </div>
+          )}
+        </div>
+
+        {/* --------------------------- video link manager --------------------------- */}
+        <div id="video-links-section" className="mt-10 scroll-mt-24">
+          <SectionHeading
+            eyebrow="External video publishing"
+            title="Video Link Manager"
+            description="Publish YouTube, Vimeo or direct-file videos into the existing Video Editing LED screens. Covers, crop, filters, aspect ratio and order are stored in D1."
+            action={
+              <span className="hidden max-w-xs text-right text-[9px] uppercase leading-relaxed tracking-[0.14em] text-white/25 sm:block">
+                No file upload required · aspect-aware LED panels
+              </span>
+            }
+          />
+
+          {authenticated ? (
+            <VideoLinkManager />
+          ) : (
+            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 text-[11px] leading-relaxed text-white/40">
+              Locked. Sign in to publish, preview, edit or remove external video links.
             </div>
           )}
         </div>

@@ -10,7 +10,7 @@ ADMIN_PASSWORD_HASH=pbkdf2:100000:replace:me
 # `wrangler secret put AI_API_KEY` (Pages: Settings → Variables and Secrets).
 AI_API_URL=https://integrate.api.nvidia.com/v1/chat/completions
 AI_API_KEY=
-AI_MODEL=google/gemma-4-31b-it
+AI_MODEL=minimax-m3.1-flash
 AI_PROVIDER=nvidia-nim
 
 # Optional. Only needed when the Vite dev server proxies straight to the
@@ -21,8 +21,9 @@ DEV_ORIGIN=http://localhost:5173
 
 # Private Backblaze B2 bucket (S3-compatible API). Server-side only: these are
 # never read by browser code. In production the same names live in
-# Pages -> Settings -> Variables and Secrets. Without the two key values the
-# site falls back to the R2 binding and multipart uploads stay disabled.
+# Pages -> Settings -> Variables and Secrets. Cloudflare R2 is NOT used; without
+# these values uploads and media streaming stay disabled (the site still serves
+# its static build and database-backed text content).
 B2_APPLICATION_KEY_ID=
 B2_APPLICATION_KEY=
 B2_BUCKET_NAME=gursimar-portfolio
