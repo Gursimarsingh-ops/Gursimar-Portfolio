@@ -1731,10 +1731,12 @@ export async function handleBackendRequest(request: Request, env: Env): Promise<
       // Sign-in must work even on a deployment whose database is missing or
       // unhealthy: the password is verified from secrets and the fallback
       // session cookie is signed, so there is no reason to block it.
+      const authPath = url.pathname.replace(/\/+$/, "");
       const authRoute =
-        url.pathname === `${ADMIN}/login` ||
-        url.pathname === `${ADMIN}/session` ||
-        url.pathname === `${ADMIN}/logout`;
+        authPath === `${ADMIN}/login` ||
+        authPath === "/api/login" ||
+        authPath === `${ADMIN}/session` ||
+        authPath === `${ADMIN}/logout`;
 
       if (!env.DB) {
         if (!authRoute) {
