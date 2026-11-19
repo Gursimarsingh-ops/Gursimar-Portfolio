@@ -85,7 +85,7 @@ export function MaintenancePanel() {
         <StatCard
           label="Object storage"
           value={health?.storage.ok ? "Available" : "Error"}
-          hint="R2 media bucket"
+          hint={health?.storage.provider === "backblaze-b2" ? "Backblaze B2 private bucket" : "R2 media bucket"}
           accent={health?.storage.ok ? "emerald" : "amber"}
         />
         <StatCard
@@ -170,7 +170,7 @@ export function MaintenancePanel() {
               },
               {
                 icon: HardDrive,
-                label: "R2 storage",
+                label: "Object storage",
                 value: health?.storage.ok ? "Healthy" : "Unavailable",
                 ok: health?.storage.ok ?? false,
               },

@@ -65,7 +65,7 @@ function DeleteDialog({
             <p className="text-sm font-medium text-white">Delete this project?</p>
             <p className="mt-1 text-xs leading-5 text-white/50">
               “{project.title}” will be removed from the public portfolio and its stored file will be
-              deleted from R2. This cannot be undone.
+              deleted from Backblaze B2. This cannot be undone.
             </p>
           </div>
         </div>

@@ -26,11 +26,20 @@ database_name = "portfolio-db"
 # fail instead of shipping a site whose dashboard writes nowhere.
 database_id = "00000000-0000-4000-8000-000000000000"
 
+# Kept for assets uploaded before the B2 migration and for client request
+# attachments. Portfolio media is written to B2 when its credentials are set.
 [[r2_buckets]]
 binding = "FILES"
 bucket_name = "portfolio-media"
 
 [vars]
-# Non-secret configuration. ADMIN_EMAIL, ADMIN_PASSWORD_HASH and AI_API_KEY are
-# Pages secrets (Settings -> Variables and Secrets), never this file.
+# Non-secret configuration. ADMIN_EMAIL, ADMIN_PASSWORD_HASH, AI_API_KEY and the
+# two Backblaze application key values are Pages secrets
+# (Settings -> Variables and Secrets), never this file.
 APP_NAME = "Gursimar Singh Portfolio"
+
+# Private Backblaze B2 bucket (S3-compatible API). The bucket is never made
+# public: media is streamed through /media/* by the Worker.
+B2_BUCKET_NAME = "gursimar-portfolio"
+B2_REGION = "us-east-005"
+B2_ENDPOINT = "https://s3.us-east-005.backblazeb2.com"

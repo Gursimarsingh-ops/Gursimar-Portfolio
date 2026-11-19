@@ -13,6 +13,25 @@ import {
 } from "./auth";
 import { aiRuntime, handlePortalApi } from "./portal";
 import { ensureSchema } from "./schema";
+import {
+  abortMultipartUpload,
+  b2Config,
+  cleanupMultipartUploads,
+  completeMultipartUpload,
+  createMultipartUpload,
+  deleteObject,
+  headObject,
+  listMultipartUploads,
+  listObjects,
+  MAX_PARTS,
+  PART_SIZE,
+  putObject,
+  readObject,
+  storageConfigured,
+  storageProvider,
+  uploadPart,
+  type StoredObject,
+} from "./storage";
 
 export interface Env {
   DB: D1Database;
@@ -28,6 +47,12 @@ export interface Env {
   AI_PROVIDER?: string;
   /** Optional origin allowed to call this Worker while developing against production. */
   DEV_ORIGIN?: string;
+  /* Private Backblaze B2 bucket (S3-compatible API). Server-side only. */
+  B2_APPLICATION_KEY_ID?: string;
+  B2_APPLICATION_KEY?: string;
+  B2_BUCKET_NAME?: string;
+  B2_REGION?: string;
+  B2_ENDPOINT?: string;
 }
 
 const ADMIN = "/api/admin";
@@ -40,8 +65,12 @@ const VIDEO_TYPES = new Set(["video/mp4", "video/webm", "video/quicktime"]);
 
 const LIMITS = {
   image: 8 * 1024 * 1024,
+  /** Single-request video ceiling (Cloudflare request body limit). */
   video: 90 * 1024 * 1024,
   thumbnail: 5 * 1024 * 1024,
+  /** Multipart ceiling: parts are uploaded separately, so this is far above the
+   * 100 MB Cloudflare request limit while staying well inside B2's limits. */
+  videoMultipart: 5 * 1024 * 1024 * 1024,
 };
 
 function ascii(bytes: Uint8Array, offset: number, length: number): string {
@@ -185,6 +214,14 @@ function originAllowed(request: Request, env?: Env): boolean {
   const requestOrigin = publicOrigin(request);
   if (origin === requestOrigin) return true;
 
+  // Page and API hosts always match on Cloudflare; accept that even if a
+  // proxy reports a different scheme, so a valid same-site POST is not a 403.
+  try {
+    if (new URL(origin).host === new URL(requestOrigin).host) return true;
+  } catch {
+    return false;
+  }
+
   // Explicit opt-in for a separate dev origin (e.g. Vite proxying to the deployed
   // Worker). Only an exact match on the configured origin is accepted.
   const configured = (env?.DEV_ORIGIN ?? "").trim().replace(/\/$/, "");
@@ -283,7 +320,7 @@ async function publicProjects(env: Env): Promise<Response> {
   );
 }
 
-async function publicMedia(env: Env, key: string): Promise<Response> {
+async function publicMedia(env: Env, key: string, range: string | null): Promise<Response> {
   // Only assets that belong to a *published* project can be read publicly.
   const row = await env.DB.prepare(
     `SELECT id FROM projects WHERE status = 'published' AND (asset_key = ? OR thumb_key = ?) LIMIT 1`
@@ -292,31 +329,55 @@ async function publicMedia(env: Env, key: string): Promise<Response> {
     .first<{ id: string }>();
 
   if (!row) return new Response("Not found", { status: 404 });
-  return serveObject(env, key, false);
+  return serveObject(env, key, false, range);
 }
 
-async function serveObject(env: Env, key: string, isPrivate: boolean): Promise<Response> {
-  if (!env.FILES) return new Response("File storage is not configured", { status: 503 });
-  const object = await env.FILES.get(key);
+/**
+ * Streams one stored object (Backblaze B2, falling back to a legacy R2 copy)
+ * through the Worker, so the private bucket never needs to be public. Range
+ * requests are forwarded, which is what lets large videos seek.
+ */
+async function serveObject(
+  env: Env,
+  key: string,
+  isPrivate: boolean,
+  range: string | null = null
+): Promise<Response> {
+  if (!storageConfigured(env)) return new Response("File storage is not configured", { status: 503 });
+
+  let object;
+  try {
+    object = await readObject(env, key, range);
+  } catch (error) {
+    console.error("Media read failed", error instanceof Error ? error.message : error);
+    return new Response("Storage unavailable", { status: 502 });
+  }
   if (!object) return new Response("Not found", { status: 404 });
 
   const headers = new Headers();
-  object.writeHttpMetadata(headers);
-  headers.set("etag", object.httpEtag);
+  headers.set("Content-Type", object.contentType ?? "application/octet-stream");
+  if (object.contentLength) headers.set("Content-Length", object.contentLength);
+  if (object.contentRange) headers.set("Content-Range", object.contentRange);
+  if (object.etag) headers.set("etag", object.etag);
+  headers.set("Accept-Ranges", "bytes");
   headers.set("X-Content-Type-Options", "nosniff");
   headers.set(
     "Cache-Control",
     isPrivate ? "private, no-store" : "public, max-age=31536000, immutable"
   );
 
-  return new Response(object.body, { headers });
+  return new Response(object.body, { status: object.status, headers });
 }
 
 /* --------------------------------- auth ---------------------------------- */
 
 async function login(request: Request, env: Env): Promise<Response> {
-  if (!originAllowed(request, env)) return fail("Invalid origin", 403);
+  if (!originAllowed(request, env)) {
+    console.warn("Login rejected: origin not allowed");
+    return fail("Invalid origin", 403);
+  }
   if (!isConfigured(env)) {
+    console.error("Login rejected: ADMIN_EMAIL / ADMIN_PASSWORD_HASH are not configured on this deployment");
     return fail(
       "Admin credentials are not configured. Set ADMIN_EMAIL and ADMIN_PASSWORD_HASH as Worker secrets.",
       503
@@ -326,43 +387,75 @@ async function login(request: Request, env: Env): Promise<Response> {
   const key = clientKey(request);
   if (isRateLimited(key)) return fail("Too many attempts. Try again later.", 429);
 
-  const body = await readJson<{ email?: unknown; password?: unknown }>(request);
-  const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
-  const password = typeof body?.password === "string" ? body.password : "";
-
-  if (!email || !password) {
-    recordFailure(key);
-    return fail("Email and password are required.", 400);
-  }
-
-  const expectedEmail = (env.ADMIN_EMAIL ?? "").trim().toLowerCase();
-  const passwordOk = await verifyPassword(password, env.ADMIN_PASSWORD_HASH);
-  const emailOk = email === expectedEmail;
-
-  if (!passwordOk || !emailOk) {
-    recordFailure(key);
-    return fail("Invalid email or password.", 401);
-  }
-
-  clearFailures(key);
-
-  let cookie: string;
   try {
-    cookie = await createSession(env, request);
-  } catch (error) {
-    // A failed session write must never surface as an opaque 500 after a
-    // password has already been accepted.
-    console.error("Session creation failed", error instanceof Error ? error.message : String(error));
-    return fail(
-      "Signed in, but the session could not be stored. The D1 database is not accepting writes — check the DB binding in Cloudflare Pages → Settings → Functions → Bindings.",
-      503
+    const body = await readJson<{ email?: unknown; password?: unknown }>(request);
+    const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
+    const password = typeof body?.password === "string" ? body.password : "";
+
+    if (!email || !password) {
+      recordFailure(key);
+      return fail("Email and password are required.", 400);
+    }
+
+    const expectedEmail = (env.ADMIN_EMAIL ?? "").trim().toLowerCase();
+    const passwordOk = await verifyPassword(password, env.ADMIN_PASSWORD_HASH);
+    const emailOk = email === expectedEmail;
+
+    if (!passwordOk || !emailOk) {
+      recordFailure(key);
+      console.warn(
+        `Login rejected: ${passwordOk ? "email mismatch" : "password verification failed"}`
+      );
+      return fail("Invalid email or password.", 401);
+    }
+
+    clearFailures(key);
+
+    let cookie: string;
+    try {
+      cookie = await createSession(env, request);
+    } catch (error) {
+      // A failed session write must never surface as an opaque 500 after a
+      // password has already been accepted.
+      console.error("Session creation failed", error instanceof Error ? error.message : String(error));
+      return fail(
+        "Signed in, but the session could not be stored. The D1 database is not accepting writes — check the DB binding in Cloudflare Pages → Settings → Functions → Bindings.",
+        503
+      );
+    }
+    return json(
+      { authenticated: true, email: expectedEmail },
+      200,
+      { "Set-Cookie": cookie }
     );
+  } catch (error) {
+    // Log the real exception server-side; the browser only gets a safe message.
+    console.error(
+      "Login handler failed",
+      error instanceof Error ? `${error.name}: ${error.message}\n${error.stack ?? ""}` : String(error)
+    );
+    return fail("Sign-in could not be completed because of a server error. Please try again.", 500);
   }
-  return json(
-    { authenticated: true, email: expectedEmail },
-    200,
-    { "Set-Cookie": cookie }
-  );
+}
+
+function methodNotAllowed(allow: string): Response {
+  return json({ error: `Method not allowed. Use ${allow}.` }, 405, { Allow: allow });
+}
+
+/** Same-origin preflight; harmless for normal form posts and fixes 405s. */
+function preflight(request: Request): Response {
+  const origin = request.headers.get("Origin");
+  return new Response(null, {
+    status: 204,
+    headers: {
+      Allow: "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS",
+      "Access-Control-Allow-Methods": "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, Accept",
+      "Access-Control-Max-Age": "86400",
+      ...(origin ? { "Access-Control-Allow-Origin": origin, Vary: "Origin" } : {}),
+      "Cache-Control": "no-store",
+    },
+  });
 }
 
 async function logout(request: Request, env: Env): Promise<Response> {
@@ -444,15 +537,20 @@ async function createProject(request: Request, env: Env): Promise<Response> {
   }
   if (thumbKey && !thumbKey.startsWith("thumbs/")) return fail("Invalid thumbnail key.");
 
-  const asset = await env.FILES.head(assetKey);
+  let asset: StoredObject | null = null;
+  let thumb: StoredObject | null = null;
+  try {
+    asset = await headObject(env, assetKey);
+    thumb = thumbKey ? await headObject(env, thumbKey) : null;
+  } catch (error) {
+    return fail(error instanceof Error ? error.message : "Storage is unavailable.", 502);
+  }
   if (!asset) return fail("Uploaded asset was not found in storage.", 404);
-
-  const thumb = thumbKey ? await env.FILES.head(thumbKey) : null;
   if (thumbKey && !thumb) return fail("Uploaded thumbnail was not found in storage.", 404);
 
   const ts = nowIso();
   const id = crypto.randomUUID();
-  const hash = asset.customMetadata?.sha256 ?? null;
+  const hash = asset.sha256 ?? null;
 
   await ensureSortOrder(env);
   const last = await env.DB.prepare("SELECT COALESCE(MAX(sort_order), -1) AS max FROM projects").first<{ max: number }>();
@@ -472,11 +570,11 @@ async function createProject(request: Request, env: Env): Promise<Response> {
         category,
         status,
         assetKey,
-        asset.httpMetadata?.contentType ?? "",
+        asset.contentType ?? "",
         asset.size,
         hash,
         thumbKey,
-        thumb?.httpMetadata?.contentType ?? null,
+        thumb?.contentType ?? null,
         ts,
         ts,
         sortOrder,
@@ -539,11 +637,16 @@ async function updateProject(request: Request, env: Env, id: string): Promise<Re
     const next = typeof body.thumbKey === "string" && body.thumbKey ? body.thumbKey : null;
     if (next && !next.startsWith("thumbs/")) return fail("Invalid thumbnail key.");
     if (next) {
-      const head = await env.FILES.head(next);
+      let head: StoredObject | null = null;
+      try {
+        head = await headObject(env, next);
+      } catch (error) {
+        return fail(error instanceof Error ? error.message : "Storage is unavailable.", 502);
+      }
       if (!head) return fail("Uploaded thumbnail was not found in storage.", 404);
       replacedThumb = existing.thumb_key && existing.thumb_key !== next ? existing.thumb_key : null;
       thumbKey = next;
-      thumbType = head.httpMetadata?.contentType ?? null;
+      thumbType = head.contentType ?? null;
     } else {
       replacedThumb = existing.thumb_key;
       thumbKey = null;
@@ -568,15 +671,20 @@ async function updateProject(request: Request, env: Env, id: string): Promise<Re
     if (!next || !next.startsWith(prefix)) {
       return fail("Replacement media does not match the project kind.");
     }
-    const head = await env.FILES.head(next);
+    let head: StoredObject | null = null;
+    try {
+      head = await headObject(env, next);
+    } catch (error) {
+      return fail(error instanceof Error ? error.message : "Storage is unavailable.", 502);
+    }
     if (!head) return fail("Uploaded media was not found in storage.", 404);
 
     replacedAsset = existing.asset_key !== next ? existing.asset_key : null;
     replacedAssetHash = existing.asset_hash;
     assetKey = next;
-    assetType = head.httpMetadata?.contentType ?? existing.asset_type;
+    assetType = head.contentType ?? existing.asset_type;
     assetSize = head.size;
-    assetHash = head.customMetadata?.sha256 ?? null;
+    assetHash = head.sha256 ?? null;
     // Dimensions describe the new file; the client sends them with the replacement.
     nextWidth = assetWidth;
     nextHeight = assetHeight;
@@ -617,12 +725,12 @@ async function updateProject(request: Request, env: Env, id: string): Promise<Re
   }
 
   if (replacedThumb) {
-    await env.FILES.delete(replacedThumb).catch(() => undefined);
+    await deleteObject(env, [replacedThumb]).catch(() => undefined);
     await env.DB.prepare("DELETE FROM upload_fingerprints WHERE key = ?").bind(replacedThumb).run();
   }
 
   if (replacedAsset) {
-    await env.FILES.delete(replacedAsset).catch(() => undefined);
+    await deleteObject(env, [replacedAsset]).catch(() => undefined);
     await env.DB.prepare("DELETE FROM upload_fingerprints WHERE key = ?").bind(replacedAsset).run();
     // The old fingerprint row may have used the hash column; free it for a re-upload.
     if (replacedAssetHash) {
@@ -693,7 +801,7 @@ async function deleteUnusedUpload(env: Env, key: string): Promise<Response> {
 
   if (referenced) return fail("This file is attached to a project and cannot be removed here.", 409);
 
-  await env.FILES.delete(key);
+  await deleteObject(env, [key]);
   await env.DB.prepare("DELETE FROM upload_fingerprints WHERE key = ?").bind(key).run();
   return json({ ok: true });
 }
@@ -708,7 +816,7 @@ async function deleteProject(env: Env, id: string): Promise<Response> {
     (key): key is string => typeof key === "string" && key.length > 0
   );
   if (keys.length) {
-    await env.FILES.delete(keys).catch(() => undefined);
+    await deleteObject(env, keys).catch(() => undefined);
     for (const key of keys) {
       await env.DB.prepare("DELETE FROM upload_fingerprints WHERE key = ?").bind(key).run();
     }
@@ -720,8 +828,11 @@ async function deleteProject(env: Env, id: string): Promise<Response> {
 /* --------------------------------- uploads -------------------------------- */
 
 async function upload(request: Request, env: Env): Promise<Response> {
-  if (!env.FILES) {
-    return fail("File storage (R2 binding FILES) is not configured on this deployment.", 503);
+  if (!storageConfigured(env)) {
+    return fail(
+      "File storage is not configured. Set the Backblaze B2 credentials (B2_APPLICATION_KEY_ID, B2_APPLICATION_KEY, B2_BUCKET_NAME, B2_REGION, B2_ENDPOINT) on this deployment.",
+      503
+    );
   }
 
   const contentType = request.headers.get("Content-Type") ?? "";
@@ -808,9 +919,10 @@ async function upload(request: Request, env: Env): Promise<Response> {
             : "thumbs";
   const key = `${prefix}/${crypto.randomUUID()}.${EXTENSIONS[type] ?? "bin"}`;
 
-  await env.FILES.put(key, buffer, {
-    httpMetadata: { contentType: type },
-    customMetadata: { sha256: hash, originalName: file.name.slice(0, 120) },
+  await putObject(env, key, buffer, {
+    contentType: type,
+    sha256: hash,
+    originalName: file.name.slice(0, 120),
   });
 
   if (trackFingerprint) {
@@ -821,7 +933,7 @@ async function upload(request: Request, env: Env): Promise<Response> {
       .run();
 
     if ((claim.meta?.changes ?? 0) === 0) {
-      await env.FILES.delete(key).catch(() => undefined);
+      await deleteObject(env, [key]).catch(() => undefined);
       return fail("This file has already been uploaded.", 409);
     }
   }
@@ -836,6 +948,241 @@ async function upload(request: Request, env: Env): Promise<Response> {
 }
 
 /* ---------------------------------- stats --------------------------------- */
+
+/* ---------------------------- multipart uploads --------------------------- */
+
+/** Rules shared by the multipart endpoints; mirrors the single-request upload. */
+const MULTIPART_RULES: Record<
+  "graphic" | "video" | "thumbnail" | "artist" | "original",
+  { types: Set<string>; prefix: string; max: number }
+> = {
+  graphic: { types: IMAGE_TYPES, prefix: "graphics", max: LIMITS.image },
+  video: { types: VIDEO_TYPES, prefix: "videos", max: LIMITS.videoMultipart },
+  thumbnail: { types: IMAGE_TYPES, prefix: "thumbs", max: LIMITS.thumbnail },
+  artist: { types: IMAGE_TYPES, prefix: "artist", max: LIMITS.image },
+  original: { types: IMAGE_TYPES, prefix: "originals", max: LIMITS.image },
+};
+
+const MEDIA_KEY_PREFIXES = ["graphics/", "videos/", "thumbs/", "artist/", "originals/"];
+
+function validMediaKey(key: string): boolean {
+  return MEDIA_KEY_PREFIXES.some((prefix) => key.startsWith(prefix)) && !key.includes("..");
+}
+
+/**
+ * Multipart upload, step 1: reserve an object key and open a B2 multipart
+ * upload. The browser then streams each part to this Worker; the B2
+ * credentials and the signed requests never leave the server, and no single
+ * request comes near Cloudflare's body-size limit.
+ */
+async function multipartStart(request: Request, env: Env): Promise<Response> {
+  if (storageProvider(env) !== "backblaze-b2") {
+    return fail(
+      "Large multipart uploads need Backblaze B2. Configure B2_APPLICATION_KEY_ID, B2_APPLICATION_KEY, B2_BUCKET_NAME, B2_REGION and B2_ENDPOINT.",
+      503
+    );
+  }
+
+  const body = await readJson<{ kind?: unknown; filename?: unknown; type?: unknown; size?: unknown }>(request);
+  if (!body) return fail("Invalid JSON body.");
+
+  const kind = typeof body.kind === "string" ? body.kind : "";
+  if (!(kind in MULTIPART_RULES)) return fail("Upload kind must be graphic, video, artist, original or thumbnail.");
+  const rule = MULTIPART_RULES[kind as keyof typeof MULTIPART_RULES];
+
+  const type = typeof body.type === "string" ? body.type.toLowerCase() : "";
+  if (!rule.types.has(type)) {
+    return fail(
+      kind === "video"
+        ? "Unsupported video format. Use MP4, WebM or MOV."
+        : "Unsupported image format. Use JPG, PNG, WebP or GIF.",
+      415
+    );
+  }
+
+  const size = typeof body.size === "number" && Number.isFinite(body.size) ? Math.round(body.size) : 0;
+  if (size <= 0) return fail("The file size is required.", 400);
+  if (size > rule.max) {
+    return fail(`File is too large. Maximum size is ${Math.round(rule.max / (1024 * 1024))} MB.`, 413);
+  }
+
+  const partCount = Math.ceil(size / PART_SIZE);
+  if (partCount > MAX_PARTS) return fail("File needs more upload parts than Backblaze B2 accepts.", 413);
+
+  const filename = typeof body.filename === "string" ? body.filename : "";
+  const key = `${rule.prefix}/${crypto.randomUUID()}.${EXTENSIONS[type] ?? "bin"}`;
+
+  try {
+    const uploadId = await createMultipartUpload(env, key, type);
+    return json({
+      key,
+      uploadId,
+      partSize: PART_SIZE,
+      partCount,
+      type,
+      filename: filename.slice(0, 120),
+      provider: "backblaze-b2",
+    });
+  } catch (error) {
+    return fail(error instanceof Error ? error.message : "Could not start the upload.", 502);
+  }
+}
+
+/** Multipart step 2: forward one part (<= PART_SIZE) to B2. */
+async function multipartPart(request: Request, env: Env, url: URL): Promise<Response> {
+  const key = url.searchParams.get("key") ?? "";
+  const uploadId = url.searchParams.get("uploadId") ?? "";
+  const partNumber = Number(url.searchParams.get("partNumber"));
+
+  if (!validMediaKey(key)) return fail("Invalid media key.", 400);
+  if (!uploadId || uploadId.length > 1024) return fail("Missing upload id.", 400);
+  if (!Number.isInteger(partNumber) || partNumber < 1 || partNumber > MAX_PARTS) {
+    return fail("Invalid part number.", 400);
+  }
+
+  const length = Number(request.headers.get("content-length") ?? "0");
+  if (length > PART_SIZE + 1024 * 1024) return fail("Upload part is too large.", 413);
+
+  let buffer: ArrayBuffer;
+  try {
+    buffer = await request.arrayBuffer();
+  } catch {
+    return fail("Could not read the upload part.", 400);
+  }
+  if (!buffer.byteLength) return fail("Upload part was empty.", 400);
+
+  try {
+    const etag = await uploadPart(env, key, uploadId, partNumber, buffer);
+    return json({ partNumber, etag, size: buffer.byteLength });
+  } catch (error) {
+    return fail(error instanceof Error ? error.message : "Upload part failed.", 502);
+  }
+}
+
+/** Multipart step 3: complete the object and confirm it is readable. */
+async function multipartComplete(request: Request, env: Env): Promise<Response> {
+  const body = await readJson<{
+    key?: unknown;
+    uploadId?: unknown;
+    parts?: unknown;
+    contentType?: unknown;
+  }>(request);
+  if (!body) return fail("Invalid JSON body.");
+
+  const key = typeof body.key === "string" ? body.key : "";
+  const uploadId = typeof body.uploadId === "string" ? body.uploadId : "";
+  if (!validMediaKey(key)) return fail("Invalid media key.", 400);
+  if (!uploadId) return fail("Missing upload id.", 400);
+
+  const parts = Array.isArray(body.parts)
+    ? body.parts
+        .filter(
+          (part): part is { partNumber: number; etag: string } =>
+            typeof part === "object" &&
+            part !== null &&
+            typeof (part as { partNumber?: unknown }).partNumber === "number" &&
+            typeof (part as { etag?: unknown }).etag === "string"
+        )
+        .map((part) => ({ partNumber: part.partNumber, etag: part.etag }))
+    : [];
+
+  if (!parts.length || parts.length > MAX_PARTS) return fail("Upload parts are required.", 400);
+
+  try {
+    await completeMultipartUpload(env, key, uploadId, parts);
+    const head = await headObject(env, key);
+    if (!head) return fail("Backblaze B2 accepted the upload but the file is not readable yet.", 502);
+    return json({
+      key,
+      type: head.contentType ?? (typeof body.contentType === "string" ? body.contentType : ""),
+      size: head.size,
+      hash: head.sha256 ?? "",
+      url: `${ADMIN}/media/${key}`,
+      provider: "backblaze-b2",
+    });
+  } catch (error) {
+    return fail(error instanceof Error ? error.message : "Could not finish the upload.", 502);
+  }
+}
+
+/** Multipart cleanup: discard an upload the browser abandoned. */
+async function multipartAbort(request: Request, env: Env): Promise<Response> {
+  const body = await readJson<{ key?: unknown; uploadId?: unknown }>(request);
+  const key = typeof body?.key === "string" ? body.key : "";
+  const uploadId = typeof body?.uploadId === "string" ? body.uploadId : "";
+  if (!validMediaKey(key) || !uploadId) return fail("A key and upload id are required.");
+
+  try {
+    await abortMultipartUpload(env, key, uploadId);
+    return json({ ok: true });
+  } catch (error) {
+    return fail(error instanceof Error ? error.message : "Could not cancel the upload.", 502);
+  }
+}
+
+/** Incomplete uploads still open on the bucket (used for cleanup). */
+async function multipartList(env: Env): Promise<Response> {
+  try {
+    return json({ uploads: await listMultipartUploads(env), provider: "backblaze-b2" });
+  } catch (error) {
+    return fail(error instanceof Error ? error.message : "Could not list uploads.", 502);
+  }
+}
+
+async function multipartCleanup(request: Request, env: Env): Promise<Response> {
+  const body = await readJson<{ olderThanHours?: unknown }>(request);
+  const olderThanHours =
+    typeof body?.olderThanHours === "number" && Number.isFinite(body.olderThanHours) && body.olderThanHours >= 0
+      ? Math.min(body.olderThanHours, 24 * 30)
+      : 24;
+  try {
+    const result = await cleanupMultipartUploads(env, olderThanHours);
+    return json({ ...result, olderThanHours });
+  } catch (error) {
+    return fail(error instanceof Error ? error.message : "Could not clean up uploads.", 502);
+  }
+}
+
+/** Listing + metadata for stored objects (admin only). */
+async function listMedia(env: Env, url: URL): Promise<Response> {
+  const prefix = url.searchParams.get("prefix") ?? "";
+  const cursor = url.searchParams.get("cursor");
+  const limit = Number(url.searchParams.get("limit") ?? "100");
+  try {
+    const result = await listObjects(env, {
+      prefix: prefix || undefined,
+      cursor,
+      limit: Number.isFinite(limit) ? limit : 100,
+    });
+    return json({ ...result, provider: storageProvider(env), bucket: env.B2_BUCKET_NAME ?? null });
+  } catch (error) {
+    return fail(error instanceof Error ? error.message : "Could not list stored media.", 502);
+  }
+}
+
+async function mediaInfo(env: Env, url: URL): Promise<Response> {
+  const key = url.searchParams.get("key") ?? "";
+  if (!validMediaKey(key)) return fail("Invalid media key.", 400);
+
+  try {
+    const head = await headObject(env, key);
+    if (!head) return json({ key, exists: false, provider: storageProvider(env) });
+    const used = await env.DB.prepare(
+      "SELECT id, title FROM projects WHERE asset_key = ? OR thumb_key = ? LIMIT 1"
+    )
+      .bind(key, key)
+      .first<{ id: string; title: string }>();
+    return json({
+      key,
+      exists: true,
+      ...head,
+      provider: storageProvider(env),
+      project: used ? { id: used.id, title: used.title } : null,
+    });
+  } catch (error) {
+    return fail(error instanceof Error ? error.message : "Could not read file metadata.", 502);
+  }
+}
 
 async function stats(env: Env): Promise<Response> {
   const counts = await env.DB.prepare(
@@ -876,9 +1223,10 @@ async function stats(env: Env): Promise<Response> {
 }
 
 async function status(env: Env): Promise<Response> {
-  let storageOk = Boolean(env.FILES);
+  const provider = storageProvider(env);
+  let storageOk = provider !== "none";
   try {
-    if (env.FILES) await env.FILES.list({ limit: 1 });
+    if (storageOk) await headObject(env, "__health_probe__");
   } catch {
     storageOk = false;
   }
@@ -891,10 +1239,18 @@ async function status(env: Env): Promise<Response> {
     configured: isConfigured(env),
     email: env.ADMIN_EMAIL ?? null,
     database: { ok: true },
-    storage: { ok: storageOk, objects: aggregate?.assets ?? 0, bytes: aggregate?.bytes ?? 0 },
+    storage: {
+      ok: storageOk,
+      provider,
+      bucket: provider === "backblaze-b2" ? (env.B2_BUCKET_NAME ?? null) : null,
+      region: provider === "backblaze-b2" ? (b2Config(env)?.region ?? env.B2_REGION ?? null) : null,
+      objects: aggregate?.assets ?? 0,
+      bytes: aggregate?.bytes ?? 0,
+    },
     limits: {
       imageBytes: LIMITS.image,
       videoBytes: LIMITS.video,
+      videoMultipartBytes: LIMITS.videoMultipart,
       thumbnailBytes: LIMITS.thumbnail,
       imageTypes: [...IMAGE_TYPES],
       videoTypes: [...VIDEO_TYPES],
@@ -951,17 +1307,17 @@ async function publicArtistPhoto(env: Env): Promise<Response> {
 }
 
 /** Public: serve an artist asset only while it is the active portrait. */
-async function serveActiveArtistPhoto(env: Env, key: string): Promise<Response> {
+async function serveActiveArtistPhoto(env: Env, key: string, range: string | null): Promise<Response> {
   const row = await readSetting(env, SETTINGS_ARTIST_PHOTO);
   if (!row?.value || row.value !== key) return new Response("Not found", { status: 404 });
-  return serveObject(env, key, false);
+  return serveObject(env, key, false, range);
 }
 
-function toAdminArtistPhoto(key: string, updatedAt: string, head: R2Object | null) {
+function toAdminArtistPhoto(key: string, updatedAt: string, head: StoredObject | null) {
   return {
     key,
     url: `${ADMIN}/media/${key}`,
-    type: head?.httpMetadata?.contentType ?? "",
+    type: head?.contentType ?? "",
     size: head?.size ?? 0,
     updatedAt,
   };
@@ -975,7 +1331,12 @@ async function adminArtistPhoto(request: Request, env: Env): Promise<Response> {
       ? { key: originalRow.value, url: `${ADMIN}/media/${originalRow.value}`, updatedAt: originalRow.updatedAt }
       : null;
     if (!row?.value) return json({ photo: null, original });
-    const head = await env.FILES.head(row.value);
+    let head: StoredObject | null = null;
+    try {
+      head = await headObject(env, row.value);
+    } catch (error) {
+      return fail(error instanceof Error ? error.message : "Storage is unavailable.", 502);
+    }
     if (!head) return json({ photo: null, original, warning: "The stored artist photo is missing from storage." });
     return json({ photo: toAdminArtistPhoto(row.value, row.updatedAt, head), original });
   }
@@ -990,8 +1351,8 @@ async function adminArtistPhoto(request: Request, env: Env): Promise<Response> {
     } catch {
       return fail("The settings table is missing. Apply worker/schema.sql to the D1 database first.", 503);
     }
-    if (row?.value) await env.FILES.delete(row.value).catch(() => undefined);
-    if (originalRow?.value) await env.FILES.delete(originalRow.value).catch(() => undefined);
+    if (row?.value) await deleteObject(env, [row.value]).catch(() => undefined);
+    if (originalRow?.value) await deleteObject(env, [originalRow.value]).catch(() => undefined);
     return json({ ok: true });
   }
 
@@ -1002,12 +1363,16 @@ async function adminArtistPhoto(request: Request, env: Env): Promise<Response> {
   const originalKey = typeof body?.originalKey === "string" && body.originalKey ? body.originalKey : "";
   if (originalKey && !originalKey.startsWith("originals/")) return fail("Invalid original image key.");
 
-  const head = await env.FILES.head(next);
-  if (!head) return fail("The uploaded photo was not found in storage.", 404);
-  if (originalKey) {
-    const originalHead = await env.FILES.head(originalKey);
-    if (!originalHead) return fail("The stored original image was not found.", 404);
+  let head: StoredObject | null = null;
+  try {
+    head = await headObject(env, next);
+    if (originalKey && !(await headObject(env, originalKey))) {
+      return fail("The stored original image was not found.", 404);
+    }
+  } catch (error) {
+    return fail(error instanceof Error ? error.message : "Storage is unavailable.", 502);
   }
+  if (!head) return fail("The uploaded photo was not found in storage.", 404);
 
   const previous = await readSetting(env, SETTINGS_ARTIST_PHOTO);
   const previousOriginal = await readSetting(env, SETTINGS_ARTIST_ORIGINAL);
@@ -1019,10 +1384,10 @@ async function adminArtistPhoto(request: Request, env: Env): Promise<Response> {
   }
 
   if (previous?.value && previous.value !== next) {
-    await env.FILES.delete(previous.value).catch(() => undefined);
+    await deleteObject(env, [previous.value]).catch(() => undefined);
   }
   if (originalKey && previousOriginal?.value && previousOriginal.value !== originalKey) {
-    await env.FILES.delete(previousOriginal.value).catch(() => undefined);
+    await deleteObject(env, [previousOriginal.value]).catch(() => undefined);
   }
 
   const savedOriginal = originalKey
@@ -1084,30 +1449,38 @@ async function adminHealth(request: Request, env: Env): Promise<Response> {
   }
   const dbLatency = Date.now() - dbStart;
 
+  const provider = storageProvider(env);
+  const storageLabel = provider === "backblaze-b2" ? "Backblaze B2" : provider === "r2" ? "R2" : "no storage";
+
   const storageStart = Date.now();
-  let storageOk = true;
+  let storageOk = provider !== "none";
   try {
-    await env.FILES.head("__health_probe__");
+    if (storageOk) await headObject(env, "__health_probe__");
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (!message.toLowerCase().includes("not found")) storageOk = false;
   }
   const storageLatency = Date.now() - storageStart;
 
-  // Portfolio uploads: prove R2 accepts a write, reads it back and deletes it.
+  // Portfolio uploads: prove the private bucket accepts a write, reads it back
+  // and deletes it. This is a real B2 round trip, not a binding check.
   const uploadStart = Date.now();
   let uploadsOk = false;
   let uploadsDetail = "Write probe failed";
   const probeKey = `health/probe-${crypto.randomUUID()}.txt`;
   try {
-    await env.FILES.put(probeKey, "ok", { httpMetadata: { contentType: "text/plain" } });
-    const written = await env.FILES.head(probeKey);
-    await env.FILES.delete(probeKey);
+    await putObject(env, probeKey, new TextEncoder().encode("ok").buffer as ArrayBuffer, {
+      contentType: "text/plain",
+    });
+    const written = await headObject(env, probeKey);
+    await deleteObject(env, [probeKey]);
     uploadsOk = Boolean(written);
-    uploadsDetail = uploadsOk ? "Upload, read-back and delete verified" : "Wrote but could not read back";
+    uploadsDetail = uploadsOk
+      ? `Upload, read-back and delete verified on ${storageLabel}`
+      : "Wrote but could not read back";
   } catch (error) {
-    uploadsDetail = `R2 write failed: ${error instanceof Error ? error.message.slice(0, 80) : "unknown"}`;
-    await env.FILES.delete(probeKey).catch(() => undefined);
+    uploadsDetail = `${storageLabel} write failed: ${error instanceof Error ? error.message.slice(0, 120) : "unknown"}`;
+    await deleteObject(env, [probeKey]).catch(() => undefined);
   }
   const uploadLatency = Date.now() - uploadStart;
 
@@ -1202,7 +1575,11 @@ async function adminHealth(request: Request, env: Env): Promise<Response> {
       id: "storage",
       label: "File storage",
       status: storageOk ? "operational" : "failure",
-      detail: storageOk ? "R2 bucket reachable" : "R2 bucket unreachable",
+      detail: storageOk
+        ? provider === "backblaze-b2"
+          ? `Backblaze B2 private bucket reachable${env.B2_BUCKET_NAME ? ` · ${env.B2_BUCKET_NAME}` : ""}`
+          : "R2 bucket reachable"
+        : `${storageLabel} bucket unreachable`,
       latencyMs: storageLatency,
       verified: true,
     },
@@ -1236,7 +1613,11 @@ async function adminHealth(request: Request, env: Env): Promise<Response> {
     checkedAt: nowIso(),
     uptimeSeconds: Math.max(0, Math.floor((Date.now() - isolateStartedAt) / 1000)),
     database: { ok: dbOk, latencyMs: dbLatency, objects: assets, bytes },
-    storage: { ok: storageOk },
+    storage: {
+      ok: storageOk,
+      provider,
+      bucket: provider === "backblaze-b2" ? (env.B2_BUCKET_NAME ?? null) : null,
+    },
     auth: { configured: credentialsConfigured, email: env.ADMIN_EMAIL?.trim() ?? null },
     maintenance: { enabled: maintenance?.value === "on", updatedAt: maintenance?.updatedAt ?? null },
     edge: { colo: cf?.colo ?? null, country: cf?.country ?? null },
@@ -1258,20 +1639,29 @@ async function adminHealth(request: Request, env: Env): Promise<Response> {
 /* --------------------------------- router --------------------------------- */
 
 async function handleApi(request: Request, env: Env, url: URL): Promise<Response> {
-  const path = url.pathname;
+  // Tolerate a trailing slash so /api/admin/login/ is the same route.
+  const path = url.pathname.replace(/\/+$/, "") || "/";
   const method = request.method.toUpperCase();
+
+  if (method === "OPTIONS") return preflight(request);
 
   if (path === "/api/projects" && method === "GET") return publicProjects(env);
   if (path === "/api/artist" && method === "GET") return publicArtistPhoto(env);
   if (path === "/api/site/status" && method === "GET") return publicSiteStatus(env);
 
-  if (path === `${ADMIN}/login` && method === "POST") return login(request, env);
+  // `/api/login` is kept as an alias so an older cached bundle cannot 404.
+  const loginPaths = new Set([`${ADMIN}/login`, "/api/login"]);
+  if (loginPaths.has(path) && method === "POST") return login(request, env);
+  if (loginPaths.has(path)) return methodNotAllowed("POST");
+
   if (path === `${ADMIN}/session` && method === "GET") {
     const ok = await getSession(env, request);
     if (!ok) return fail("Unauthorized", 401);
     return json({ authenticated: true, email: env.ADMIN_EMAIL ?? null });
   }
+  if (path === `${ADMIN}/session`) return methodNotAllowed("GET");
   if (path === `${ADMIN}/logout` && method === "POST") return logout(request, env);
+  if (path === `${ADMIN}/logout`) return methodNotAllowed("POST");
 
   const portal = await handlePortalApi(request, env, url, {
     requireAdmin: (req, portalEnv, mutating) => requireAdmin(req, portalEnv as Env, mutating),
@@ -1294,6 +1684,16 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     return adminArtistPhoto(request, env);
   if (path === `${ADMIN}/upload` && method === "POST") return upload(request, env);
 
+  // Backblaze B2 multipart uploads, listing and metadata (admin session required).
+  if (path === `${ADMIN}/media/multipart/start` && method === "POST") return multipartStart(request, env);
+  if (path === `${ADMIN}/media/multipart/part` && method === "PUT") return multipartPart(request, env, url);
+  if (path === `${ADMIN}/media/multipart/complete` && method === "POST") return multipartComplete(request, env);
+  if (path === `${ADMIN}/media/multipart/abort` && method === "POST") return multipartAbort(request, env);
+  if (path === `${ADMIN}/media/multipart/uploads` && method === "GET") return multipartList(env);
+  if (path === `${ADMIN}/media/multipart/cleanup` && method === "POST") return multipartCleanup(request, env);
+  if (path === `${ADMIN}/media/list` && method === "GET") return listMedia(env, url);
+  if (path === `${ADMIN}/media/info` && method === "GET") return mediaInfo(env, url);
+
   const projectMatch = path.match(/^\/api\/admin\/projects\/([^/]+)$/);
   if (projectMatch) {
     const id = decodeURIComponent(projectMatch[1]);
@@ -1304,7 +1704,7 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
   if (path.startsWith(`${ADMIN}/media/`)) {
     const key = decodeURIComponent(path.slice(`${ADMIN}/media/`.length));
     if (!key) return fail("Missing media key.", 400);
-    if (method === "GET") return serveObject(env, key, true);
+    if (method === "GET") return serveObject(env, key, true, request.headers.get("Range"));
     if (method === "DELETE") return deleteUnusedUpload(env, key);
   }
 
@@ -1366,13 +1766,17 @@ export async function handleBackendRequest(request: Request, env: Env): Promise<
     if (url.pathname.startsWith("/media/")) {
       const key = decodeURIComponent(url.pathname.slice("/media/".length));
       if (!key) return new Response("Not found", { status: 404 });
-      if (key.startsWith("artist/")) return await serveActiveArtistPhoto(env, key);
-      return await publicMedia(env, key);
+      const range = request.headers.get("Range");
+      if (key.startsWith("artist/")) return await serveActiveArtistPhoto(env, key, range);
+      return await publicMedia(env, key, range);
     }
 
     return fail("Not found", 404);
   } catch (error) {
-    console.error("Unhandled request error", error);
+    console.error(
+      `Unhandled request error ${request.method} ${url.pathname}`,
+      error instanceof Error ? `${error.name}: ${error.message}\n${error.stack ?? ""}` : String(error)
+    );
     return json({ error: "Unexpected server error." }, 500);
   }
 }

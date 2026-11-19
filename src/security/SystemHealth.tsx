@@ -218,7 +218,7 @@ export function SystemHealth({
         {healthy ? (
           <>
             <CheckCircle2 className="h-2.5 w-2.5 text-emerald-400/60" />
-            Checks run server-side against the live Worker, D1 and R2
+            Checks run server-side against the live Worker, D1 and the private object bucket
           </>
         ) : (
           <>

@@ -6,7 +6,7 @@ import { api, formatBytes, uploadFile, type ProjectStatus } from "@/admin/api";
 const IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 const VIDEO_TYPES = ["video/mp4", "video/webm", "video/quicktime"];
 const MAX_IMAGE = 8 * 1024 * 1024;
-const MAX_VIDEO = 90 * 1024 * 1024;
+const MAX_VIDEO = 5 * 1024 * 1024 * 1024;
 const MAX_THUMB = 5 * 1024 * 1024;
 
 const inputCls =
@@ -617,8 +617,9 @@ export function UploadPanel({
           {kind === "graphic" ? "Upload graphic projects" : "Upload video projects"}
         </p>
         <p className="mt-1 text-[11px] leading-5 text-white/40">
-          Files are stored in your private R2 bucket through an authenticated endpoint. Published projects
-          appear automatically in the matching public category.
+          Files are stored in your private Backblaze B2 bucket through authenticated, server-signed
+          requests. Large videos upload in parts. Published projects appear automatically in the matching
+          public category.
         </p>
       </div>
 

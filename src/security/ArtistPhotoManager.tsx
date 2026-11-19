@@ -59,7 +59,7 @@ function Notice({ tone, children }: { tone: Tone; children: React.ReactNode }) {
 /**
  * Artist Profile Management.
  *
- * The edited photo lives in R2 (`artist/`), the untouched upload is kept in R2
+ * The edited photo lives in Backblaze B2 (`artist/`), the untouched upload is kept there too
  * (`originals/`) so it can be re-edited, and both pointers live in D1 settings.
  */
 export function ArtistPhotoManager() {
@@ -347,7 +347,7 @@ export function ArtistPhotoManager() {
             {!message && !warning && (
               <Notice tone="info">
                 Uploading opens the editor first: crop, zoom, rotate, aspect ratio and colour grading are applied
-                before the file is written to R2. Saving points the Artist frame at the new image, and changes
+                before the file is written to the private bucket. Saving points the Artist frame at the new image, and changes
                 appear on the deployed site immediately.
               </Notice>
             )}
@@ -401,7 +401,7 @@ export function ArtistPhotoManager() {
               <div>
                 <p className="text-[13px] font-medium text-white">Delete the artist photo?</p>
                 <p className="mt-1 text-[11px] leading-relaxed text-white/45">
-                  The edited photo and its kept original are deleted from R2 and the frame returns to its empty
+                  The edited photo and its kept original are deleted from the bucket and the frame returns to its empty
                   plaque. You can upload a new photo at any time.
                 </p>
               </div>

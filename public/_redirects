@@ -1,0 +1,7 @@
+# SPA deep links. Cloudflare Pages serves the built index.html for the admin and
+# security dashboards, while /api/* and /media/* are handled by Pages Functions
+# (see _routes.json) before static routing.
+/admin     /index.html   200
+/admin/*   /index.html   200
+/security  /index.html   200
+/security/* /index.html  200

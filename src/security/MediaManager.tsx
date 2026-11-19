@@ -43,7 +43,7 @@ function formatDuration(seconds: number | null): string {
 const IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 const VIDEO_TYPES = ["video/mp4", "video/webm", "video/quicktime"];
 const MAX_IMAGE = 8 * 1024 * 1024;
-const MAX_VIDEO = 90 * 1024 * 1024;
+const MAX_VIDEO = 5 * 1024 * 1024 * 1024;
 const MAX_THUMB = 5 * 1024 * 1024;
 
 const inputCls =
@@ -739,7 +739,7 @@ export function MediaManager({ kind }: { kind: ProjectKind }) {
             {heading}
           </h2>
           <p className="mt-1 text-[10px] text-white/40">
-            {projects.length} item{projects.length === 1 ? "" : "s"} · {published} published · stored in D1 + R2
+            {projects.length} item{projects.length === 1 ? "" : "s"} · {published} published · stored in D1 + Backblaze B2
           </p>
         </div>
 
@@ -937,7 +937,7 @@ export function MediaManager({ kind }: { kind: ProjectKind }) {
               <div>
                 <p className="text-[13px] font-medium text-white">Delete “{deleting.title}”?</p>
                 <p className="mt-1 text-[11px] leading-relaxed text-white/45">
-                  The project row is removed from D1 and the stored file is deleted from R2. This cannot be undone.
+                  The project row is removed from D1 and the stored file is deleted from Backblaze B2. This cannot be undone.
                 </p>
               </div>
             </div>

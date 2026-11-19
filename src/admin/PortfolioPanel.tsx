@@ -129,6 +129,7 @@ function StoragePanel({ status, stats }: { status: StorageStatus | null; stats: 
     return <p className="text-sm text-white/50">Loading storage status…</p>;
   }
 
+  const b2 = status.storage.provider === "backblaze-b2";
   const rows = [
     {
       label: "Admin credentials",
@@ -139,9 +140,11 @@ function StoragePanel({ status, stats }: { status: StorageStatus | null; stats: 
     },
     { label: "Database (D1)", ok: status.database.ok, detail: status.database.ok ? "Connected" : "Unavailable" },
     {
-      label: "Object storage (R2)",
+      label: b2 ? "Object storage (Backblaze B2)" : "Object storage (R2)",
       ok: status.storage.ok,
-      detail: status.storage.ok ? `${status.storage.objects} objects stored` : "Bucket unavailable",
+      detail: status.storage.ok
+        ? `${status.storage.objects} objects stored${b2 && status.storage.bucket ? ` · private bucket ${status.storage.bucket}` : ""}`
+        : "Bucket unavailable",
     },
   ];
 
@@ -180,9 +183,10 @@ function StoragePanel({ status, stats }: { status: StorageStatus | null; stats: 
       <Panel title="Upload limits">
         <ul className="grid gap-2 text-[11px] text-white/50 sm:grid-cols-2">
           <li>Images · {formatBytes(status.limits.imageBytes)} · JPG, PNG, WebP, GIF</li>
-          <li>Videos · {formatBytes(status.limits.videoBytes)} · MP4, WebM, MOV</li>
+          <li>Videos · {formatBytes(status.limits.videoMultipartBytes ?? status.limits.videoBytes)} · MP4, WebM, MOV</li>
           <li>Thumbnails · {formatBytes(status.limits.thumbnailBytes)} · JPG, PNG, WebP, GIF</li>
           <li>Duplicates are rejected by file fingerprint.</li>
+          <li>Large videos upload in {formatBytes(8 * 1024 * 1024)} parts and resume failed parts automatically.</li>
         </ul>
       </Panel>
     </div>

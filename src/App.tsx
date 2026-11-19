@@ -41,19 +41,6 @@ async function readMaintenance(): Promise<boolean | null> {
   }
 }
 
-async function readAdminSession(): Promise<boolean> {
-  try {
-    const response = await fetch("/api/admin/session", {
-      cache: "no-store",
-      credentials: "same-origin",
-      headers: { Accept: "application/json" },
-    });
-    return response.ok;
-  } catch {
-    return false;
-  }
-}
-
 /** Neutral boot state shown while the maintenance flag is being resolved. */
 function BootScreen() {
   return (
@@ -68,28 +55,55 @@ function BootScreen() {
 
 /**
  * Gates the public portfolio behind the real, database-backed maintenance mode.
- * Signed-in administrators always see the site, so the dashboard stays reachable.
+ *
+ * The flag is polled every five seconds (and immediately when the tab becomes
+ * active again), so a visitor who is already on the page sees the maintenance
+ * screen — and gets the site back — without reloading. The database remains the
+ * only source of truth: no client storage can hold the site open or closed.
+ * /admin and /security bypass this gate, so the dashboard stays reachable.
  */
 function SiteGate({ children }: { children: ReactNode }) {
   const [state, setState] = useState<"checking" | "live" | "maintenance">("checking");
 
-  const resolve = useCallback(async () => {
+  /** Returns the server flag, or null when the server could not be reached. */
+  const check = useCallback(async (): Promise<boolean | null> => {
     const maintenance = await readMaintenance();
-    if (!maintenance) {
-      setState("live");
-      return;
-    }
-    // Maintenance is on: administrators keep working on the live site.
-    const isAdmin = await readAdminSession();
-    setState(isAdmin ? "live" : "maintenance");
+    if (maintenance === null) return null;
+    setState(maintenance ? "maintenance" : "live");
+    return maintenance;
   }, []);
 
   useEffect(() => {
-    void resolve();
-  }, [resolve]);
+    let cancelled = false;
+    void readMaintenance().then((maintenance) => {
+      if (cancelled) return;
+      // A failed first check must not lock visitors out of a working site.
+      setState(maintenance === true ? "maintenance" : "live");
+    });
+
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      void check();
+    }, 5000);
+
+    const recheck = () => {
+      if (document.visibilityState === "visible") void check();
+    };
+
+    document.addEventListener("visibilitychange", recheck);
+    window.addEventListener("focus", recheck);
+    window.addEventListener("online", recheck);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", recheck);
+      window.removeEventListener("focus", recheck);
+      window.removeEventListener("online", recheck);
+    };
+  }, [check]);
 
   if (state === "checking") return <BootScreen />;
-  if (state === "maintenance") return <MaintenanceScreen />;
+  if (state === "maintenance") return <MaintenanceScreen onRecheck={check} />;
   return <>{children}</>;
 }
 

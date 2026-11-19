@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { AlertTriangle, Check, Loader2, Lock, Mail, RefreshCw, Wrench } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -24,35 +24,31 @@ async function readMaintenance(): Promise<boolean | null> {
  * mode switched on. The state comes from D1 through /api/site/status, so a
  * refresh cannot bypass it and the page disappears as soon as it is switched off.
  */
-export function MaintenanceScreen() {
+export function MaintenanceScreen({ onRecheck }: { onRecheck?: () => Promise<boolean | null> }) {
   const [checking, setChecking] = useState(false);
   const [note, setNote] = useState<string | null>(null);
 
-  const refresh = useCallback(async (manual: boolean) => {
-    if (manual) {
+  // The site gate polls every five seconds; this button only asks on demand.
+  const refresh = useCallback(
+    async (manual: boolean) => {
+      if (!manual) return;
       setChecking(true);
       setNote(null);
-    }
-    const enabled = await readMaintenance();
-    if (enabled === false) {
-      window.location.reload();
-      return;
-    }
-    if (manual) {
+      const enabled = onRecheck ? await onRecheck() : await readMaintenance();
+      if (enabled === false) {
+        // The gate unmounts this screen as soon as the flag clears.
+        if (!onRecheck) window.location.reload();
+        return;
+      }
       setNote(
         enabled === null
           ? "Could not reach the server. Please check your connection and try again."
           : "The site is still under maintenance. Please check back shortly."
       );
-    }
-    if (manual) setChecking(false);
-  }, []);
-
-  useEffect(() => {
-    // Re-check quietly so the portfolio returns by itself once work is complete.
-    const timer = window.setInterval(() => void refresh(false), 15000);
-    return () => window.clearInterval(timer);
-  }, [refresh]);
+      setChecking(false);
+    },
+    [onRecheck]
+  );
 
   return (
     <div className="relative flex min-h-screen flex-col overflow-hidden bg-[#05070a] text-neutral-200 antialiased">

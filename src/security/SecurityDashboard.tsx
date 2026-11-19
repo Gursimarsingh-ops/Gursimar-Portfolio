@@ -709,7 +709,7 @@ export function SecurityDashboard() {
                 Locked
               </span>
               <p className="mt-2">
-                Unseal the vault and sign in to change the artist photograph. The upload is stored in R2 and
+                Unseal the vault and sign in to change the artist photograph. The upload is stored in Backblaze B2 and
                 indexed in D1, never in the browser.
               </p>
             </div>
@@ -750,7 +750,7 @@ export function SecurityDashboard() {
           <SectionHeading
             eyebrow="Content control"
             title="Media management"
-            description="Uploads are written to R2 and indexed in D1. Publishing updates the public portfolio immediately."
+            description="Uploads are written to the private Backblaze B2 bucket and indexed in D1. Publishing updates the public portfolio immediately."
             action={
               <span className="hidden max-w-xs text-right text-[9px] uppercase leading-relaxed tracking-[0.14em] text-white/25 sm:block">
                 LED screens · video projects
@@ -922,7 +922,7 @@ export function SecurityDashboard() {
               ) : (
                 <>
                   <p className="text-[11px] leading-relaxed text-white/50">
-                    Managed in the Artist profile section above. The photo is stored in R2 and referenced from D1, so
+                    Managed in the Artist profile section above. The photo is stored in Backblaze B2 and referenced from D1, so
                     it survives refreshes and redeploys.
                   </p>
                   <a
@@ -980,7 +980,7 @@ export function SecurityDashboard() {
               </ul>
               <p className="mt-3 flex items-start gap-2 text-[10px] text-white/30">
                 <HardDrive className="mt-0.5 h-3 w-3 shrink-0" />
-                Assets are served from R2; project records live in D1.
+                Assets are served from the private Backblaze B2 bucket; project records live in D1.
               </p>
             </Panel>
           </div>
