@@ -27,6 +27,7 @@ import {
   PART_SIZE,
   putObject,
   readObject,
+  StorageError,
   storageConfigured,
   storageProvider,
   uploadPart,
@@ -1883,6 +1884,9 @@ export async function handleBackendRequest(request: Request, env: Env): Promise<
       `Unhandled request error ${request.method} ${url.pathname}`,
       error instanceof Error ? `${error.name}: ${error.message}\n${error.stack ?? ""}` : String(error)
     );
+    // A storage failure is a dependency problem with a actionable message and its
+    // own status code — it must not be flattened into an opaque 500.
+    if (error instanceof StorageError) return fail(error.message, error.status);
     return json({ error: "Unexpected server error." }, 500);
   }
 }

@@ -248,6 +248,15 @@ async function b2Failure(response: Response, action: string): Promise<StorageErr
   } catch {
     detail = "";
   }
+  // Log Backblaze's own error code/message (never the credentials) so a rejected
+  // key can be told apart from a missing bucket or a read-only key.
+  if (response.status >= 400 && response.status < 500) {
+    const code = xmlValue(detail, "Code") ?? detail.replace(/<[^>]*>/g, " ").trim().slice(0, 160);
+    const message = xmlValue(detail, "Message") ?? "";
+    console.error(
+      `Backblaze rejected ${action} (${response.status}): ${code}${message ? ` — ${message}` : ""}`
+    );
+  }
   const hint =
     response.status === 401 || response.status === 403
       ? "Backblaze rejected the application key (check B2_APPLICATION_KEY_ID / B2_APPLICATION_KEY and its bucket capabilities)."
