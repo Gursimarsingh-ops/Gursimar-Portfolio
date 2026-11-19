@@ -24,7 +24,7 @@ not_found_handling = "single-page-application"
 [[d1_databases]]
 binding = "DB"
 database_name = "portfolio-db"
-database_id = "00000000-0000-4000-8000-000000000000"
+database_id = "5ace7b4b-a18a-4b6d-aa9f-8b4948b273ec"
 remote = true
 
 [vars]

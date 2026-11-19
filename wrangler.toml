@@ -24,9 +24,7 @@ pages_build_output_dir = "./dist"
 binding = "DB"
 database_name = "portfolio-db"
 # Real id from `npx wrangler d1 create portfolio-db` (or `npx wrangler d1 list`).
-# The placeholder keeps `npm run build` honest: it makes `npm run deploy:check`
-# fail instead of shipping a site whose dashboard writes nowhere.
-database_id = "00000000-0000-4000-8000-000000000000"
+database_id = "5ace7b4b-a18a-4b6d-aa9f-8b4948b273ec"
 
 [vars]
 # Non-secret configuration. ADMIN_EMAIL, ADMIN_PASSWORD_HASH, AI_API_KEY and the
