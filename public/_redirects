@@ -1,7 +1,8 @@
-# SPA deep links. Cloudflare Pages serves the built index.html for the admin and
-# security dashboards, while /api/* and /media/* are handled by Pages Functions
-# (see _routes.json) before static routing.
-/admin     /index.html   200
-/admin/*   /index.html   200
-/security  /index.html   200
-/security/* /index.html  200
+# SPA deep links. Any route that is not a real file (/, /admin, /security and their
+# sub-paths) returns the built index.html with a 200 so the client router decides.
+#
+# Do NOT add exact rules such as `/security /index.html 200`: rewriting a clean path
+# to /index.html makes Pages canonicalise it to `/`, so the live site answered
+# /security and /admin with a 308 to the homepage and the dashboards were unreachable.
+# /api/* and /media/* still run as Pages Functions first (see _routes.json).
+/*          /index.html   200
