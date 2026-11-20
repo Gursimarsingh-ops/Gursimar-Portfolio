@@ -1006,7 +1006,8 @@ function classifyFailure(status: number, detail: string, retryAfter: string | nu
   const category = ((): AiFailureCategory => {
     if (status === 401 || status === 403) return "auth";
     if (status === 402) return "credits";
-    if (status === 404) return "model_unavailable";
+    // 404 = unknown model id; 410 = the provider retired the model.
+    if (status === 404 || status === 410) return "model_unavailable";
     if (status === 408) return "timeout";
     if (status === 429) {
       if (/(quota|credit|billing|insufficient|exhaust|payment)/.test(lower)) {
@@ -1996,7 +1997,10 @@ async function adminAiTest(request: Request, env: PortalEnv): Promise<Response> 
         latencyMs,
         endpoint: url,
         model,
-        message: `The provider rejected the request (HTTP ${response.status}).`,
+        // Admin-only: the provider's own explanation is surfaced here (never a key).
+        message:
+          `The provider rejected the request (HTTP ${response.status}).` +
+          (detail ? ` ${detail.slice(0, 300)}` : ""),
         category: failure.category,
         retryable: failure.retryable,
         retryAfterMs: failure.retryAfterMs,
