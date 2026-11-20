@@ -160,12 +160,17 @@ function PipelineMonitor({ play }: { play: boolean }) {
  * a courier carries the finished cut along a route while the delivery rail
  * fills and the handoff resolves.
  */
-function DeliveryPanel({ play }: { play: boolean }) {
+function DeliveryPanel() {
+  /* Its own observer: the section is taller than any viewport, so the section-level
+     ratio rarely crosses the threshold and the ride would never start. */
+  const { ref, visible } = useReveal<HTMLDivElement>();
+
   return (
     <div
+      ref={ref}
       className={cn(
         "relative mt-6 overflow-hidden rounded-2xl border border-neutral-200 bg-white p-4 shadow-[0_22px_60px_-44px_rgba(0,0,0,0.55)] sm:p-6",
-        !play && "anim-paused"
+        !visible && "anim-paused"
       )}
     >
       <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-neutral-300 to-transparent" />
@@ -199,11 +204,27 @@ function DeliveryPanel({ play }: { play: boolean }) {
         <div className="pointer-events-none absolute inset-0 opacity-[0.5] [background-image:linear-gradient(to_right,#e9e9ea_1px,transparent_1px),linear-gradient(to_bottom,#e9e9ea_1px,transparent_1px)] [background-size:28px_28px]" />
         <div className="pointer-events-none absolute inset-x-0 top-0 h-14 bg-gradient-to-b from-white to-transparent" />
 
-        {/* message */}
-        <div className="relative flex items-center gap-2 px-4 pt-4">
-          <span className="h-px w-6 bg-neutral-900" />
-          <p className="text-[11px] font-medium tracking-tight text-neutral-800 sm:text-[13px]">
-            You&apos;re on the way to deliver your video.
+        {/* message — two timed lines sharing one slot, in sync with the ride */}
+        <div className="relative flex h-10 items-start gap-2 px-4 pt-4">
+          <span className="mt-[9px] h-px w-5 shrink-0 bg-neutral-900" />
+          <p className="relative min-w-0 flex-1 text-[11px] font-medium leading-snug tracking-tight text-neutral-800 sm:text-[13px]">
+            <span className="sr-only">
+              We&apos;re on the way to deliver your project. Delivering Your Final Master Project
+            </span>
+            <span
+              aria-hidden="true"
+              className="absolute inset-x-0 top-0"
+              style={{ animation: "delivery-msg-intro 11s ease-in-out infinite" }}
+            >
+              We&apos;re on the way to deliver your project.
+            </span>
+            <span
+              aria-hidden="true"
+              className="absolute inset-x-0 top-0 font-semibold text-neutral-900 opacity-0"
+              style={{ animation: "delivery-msg-final 11s ease-in-out infinite" }}
+            >
+              Delivering Your Final Master Project
+            </span>
           </p>
         </div>
 
@@ -215,41 +236,128 @@ function DeliveryPanel({ play }: { play: boolean }) {
         </div>
         <div className="pointer-events-none absolute inset-x-6 top-[54%] h-px bg-[repeating-linear-gradient(to_right,#d4d4d4_0px,#d4d4d4_4px,transparent_4px,transparent_10px)]" />
 
-        {/* moving delivery unit */}
+        {/* moving delivery unit — courier on a delivery scooter with the branded box */}
         <div
-          className="absolute top-[52%] h-16 w-24 -translate-y-1/2"
+          className="absolute bottom-[9px] z-10 w-[var(--van-w)] [--van-w:134px] sm:[--van-w:190px]"
           style={{ animation: "delivery-ride 11s cubic-bezier(0.45,0.05,0.55,0.95) infinite" }}
         >
-          <div className="relative h-full w-full" style={{ animation: "delivery-rider-bob 1.1s ease-in-out infinite" }}>
+          <div className="relative w-full" style={{ animation: "delivery-rider-bob 1.1s ease-in-out infinite" }}>
             {/* speed streaks */}
-            <span className="absolute left-0 top-[38%] h-px w-5 bg-neutral-400/70" />
-            <span className="absolute left-1 top-[52%] h-px w-3 bg-neutral-400/50" />
+            <span className="absolute -left-5 top-[62%] h-px w-4 bg-neutral-400/70" />
+            <span className="absolute -left-4 top-[70%] h-px w-2.5 bg-neutral-400/50" />
+            <span className="absolute -left-6 top-[54%] h-px w-2 bg-neutral-300/60" />
 
-            <svg viewBox="0 0 96 64" className="absolute right-0 top-0 h-14 w-[84px]" aria-hidden="true">
-              {/* wheels */}
-              {[22, 66].map((cx) => (
+            <svg viewBox="0 0 200 120" className="block h-auto w-full" aria-hidden="true">
+              <defs>
+                <linearGradient id="delivery-box-face" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#2b2d31" />
+                  <stop offset="100%" stopColor="#0a0b0d" />
+                </linearGradient>
+              </defs>
+
+              {/* rear cargo box — the branding is printed on its face */}
+              <rect x="4" y="24" width="62" height="60" rx="4" fill="url(#delivery-box-face)" stroke="#171717" strokeWidth="2" />
+              <path d="M9 29.5 H61" stroke="#ffffff" strokeWidth="0.9" opacity="0.22" />
+              <text
+                x="35"
+                y="53"
+                textAnchor="middle"
+                fontSize="10.5"
+                fontWeight="800"
+                fill="#ffffff"
+                fontFamily="ui-sans-serif, system-ui, sans-serif"
+                letterSpacing="0.5"
+              >
+                GURSIMAR
+              </text>
+              <text
+                x="35"
+                y="68"
+                textAnchor="middle"
+                fontSize="10.5"
+                fontWeight="800"
+                fill="#ffffff"
+                fontFamily="ui-sans-serif, system-ui, sans-serif"
+                letterSpacing="0.5"
+              >
+                SINGH
+              </text>
+              <path d="M24 76 H46" stroke="#ffffff" strokeWidth="1.3" opacity="0.45" />
+              {/* mounting rail tying the box to the scooter frame */}
+              <path d="M66 74 H80" stroke="#171717" strokeWidth="3" strokeLinecap="round" />
+
+              {/* wheels — tyre, rim, hub and three spokes so rotation reads clearly */}
+              {[
+                { cx: 76, cy: 98 },
+                { cx: 164, cy: 98 },
+              ].map(({ cx, cy }) => (
                 <g key={cx}>
-                  <circle cx={cx} cy={49} r={8} fill="#ffffff" stroke="#171717" strokeWidth={2.2} />
-                  <g style={{ transformOrigin: `${cx}px 49px`, animation: "delivery-wheel 1.6s linear infinite" }}>
-                    <line x1={cx} y1={42.5} x2={cx} y2={55.5} stroke="#171717" strokeWidth={0.9} />
-                    <line x1={cx - 6.5} y1={49} x2={cx + 6.5} y2={49} stroke="#171717" strokeWidth={0.9} />
+                  <circle cx={cx} cy={cy} r={15} fill="#ffffff" stroke="#171717" strokeWidth="3.2" />
+                  <circle cx={cx} cy={cy} r={5.4} fill="#ffffff" stroke="#171717" strokeWidth="1.8" />
+                  <g style={{ transformOrigin: `${cx}px ${cy}px`, animation: "delivery-wheel 1.4s linear infinite" }}>
+                    {[0, 120, 240].map((angle) => (
+                      <line
+                        key={angle}
+                        x1={cx}
+                        y1={cy}
+                        x2={cx + 9.6 * Math.cos((angle * Math.PI) / 180)}
+                        y2={cy + 9.6 * Math.sin((angle * Math.PI) / 180)}
+                        stroke="#171717"
+                        strokeWidth="1.6"
+                        strokeLinecap="round"
+                      />
+                    ))}
                   </g>
                 </g>
               ))}
 
-              {/* chassis */}
-              <path d="M22 49 L34 40 H50 L56 49" fill="none" stroke="#171717" strokeWidth={2.2} strokeLinejoin="round" />
-              <path d="M34 40 L38 30 H46" fill="none" stroke="#171717" strokeWidth={2} strokeLinecap="round" />
+              {/* scooter body: engine hump, footboard, seat */}
+              <path d="M76 96 L78 80 C79 74 83 71 88 71 H114 C119 71 122 74 122 80 L122 96 Z" fill="#171717" />
+              <rect x="82" y="92" width="70" height="8" rx="3.2" fill="#171717" />
+              <rect x="86" y="59" width="42" height="11" rx="4.4" fill="#2a2c30" stroke="#171717" strokeWidth="1.2" />
+              {/* front fairing, fork, steering and handlebar */}
+              <path d="M122 96 L124 66 L140 54 L151 63 L138 80 L138 96 Z" fill="#171717" />
+              <path d="M146 66 L164 94" stroke="#171717" strokeWidth="5" strokeLinecap="round" />
+              <path d="M146 57 L151 38" stroke="#171717" strokeWidth="4.2" strokeLinecap="round" />
+              <path d="M146 36 L172 32" stroke="#171717" strokeWidth="3.8" strokeLinecap="round" />
+              {/* headlight */}
+              <circle cx="136" cy="72" r="4" fill="#ffffff" stroke="#171717" strokeWidth="1.8" />
 
-              {/* courier */}
-              <circle cx={44} cy={16} r={4.4} fill="#171717" />
-              <path d="M44 20.5 L41 30 L47 33" fill="none" stroke="#171717" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" />
-              <path d="M43 23 L52 27" fill="none" stroke="#171717" strokeWidth={2} strokeLinecap="round" />
+              {/*
+                rider — drawn as a dark pictogram with a white knockout pass underneath,
+                so the two arms and two legs stay separated from the scooter body at any size.
+              */}
+              <g fill="none" strokeLinecap="round" strokeLinejoin="round">
+                {/* knockout */}
+                <g stroke="#ffffff" strokeWidth="10.8">
+                  <path d="M101 63 L120 80 L138 92" />
+                  <path d="M105 62 L130 78 L148 90" />
+                  <path d="M112 44 L133 48 L150 39" />
+                  <path d="M108 47 L131 51 L148 42" />
+                </g>
+                <g stroke="#ffffff" strokeWidth="17.5">
+                  <path d="M104 62 L112 42" />
+                </g>
 
-              {/* delivery package */}
-              <rect x={54} y={16} width={19} height={15} rx={2} fill="#171717" />
-              <text x={63.5} y={27} textAnchor="middle" fontSize={6} fontWeight={700} fill="#ffffff" fontFamily="ui-sans-serif, system-ui">4K</text>
-              <path d="M57 16 V31" stroke="#ffffff" strokeWidth={0.8} opacity={0.45} />
+                {/* far side limbs read slightly lighter for depth */}
+                <g stroke="#171717" strokeWidth="5.4" opacity="0.72">
+                  <path d="M101 63 L120 80 L138 92" />
+                  <path d="M108 47 L131 51 L148 42" />
+                </g>
+
+                {/* torso and near leg */}
+                <path d="M104 62 L112 42" stroke="#171717" strokeWidth="11" />
+                <path d="M105 62 L130 78 L148 90" stroke="#171717" strokeWidth="6.6" />
+
+                {/* near arm on the grip */}
+                <path d="M112 44 L133 48 L150 39" stroke="#171717" strokeWidth="6" />
+              </g>
+
+              {/* helmet + visor */}
+              <circle cx="114" cy="31" r="9.4" fill="#ffffff" />
+              <circle cx="114" cy="31" r="8.2" fill="#171717" />
+              <path d="M107 28.5 H121" stroke="#ffffff" strokeWidth="1.8" opacity="0.85" strokeLinecap="round" />
+              <path d="M120 34.5 A8.2 8.2 0 0 0 111 37" stroke="#ffffff" strokeWidth="1.6" opacity="0.5" fill="none" strokeLinecap="round" />
             </svg>
           </div>
         </div>
@@ -512,7 +620,7 @@ export function WorkflowQuality() {
           </div>
         </div>
 
-        <DeliveryPanel play={visible} />
+        <DeliveryPanel />
       </div>
     </section>
   );

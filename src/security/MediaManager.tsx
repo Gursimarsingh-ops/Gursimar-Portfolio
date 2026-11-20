@@ -25,6 +25,7 @@ import { CATEGORY_OPTIONS, categoryLabel } from "@/admin/categories";
 import { ProjectPreviewDialog } from "@/components/portfolio/ProjectPreviewDialog";
 import { VideoPlayerDialog } from "@/components/portfolio/VideoPlayerDialog";
 import { invalidatePublishedProjects } from "@/lib/portfolio";
+import { PROJECT_CLASSIFICATIONS, normalizeClassification } from "@/lib/classification";
 import { ASPECT_OPTIONS, MediaEditor as ImageEditor, type AspectId, type EditedImage } from "./MediaEditor";
 
 const SCREEN_RATIOS = ["auto", ...ASPECT_OPTIONS.filter((option) => option.id !== "custom").map((option) => option.id.replace(":", "/"))];
@@ -117,6 +118,9 @@ function MediaEditor({
   const [title, setTitle] = useState(project?.title ?? "");
   const [description, setDescription] = useState(project?.description ?? "");
   const [category, setCategory] = useState(project?.category ?? categories[0]?.id ?? "");
+  const [classification, setClassification] = useState<string>(
+    normalizeClassification(project?.classification)
+  );
   const [status, setStatus] = useState<ProjectStatus>(project?.status ?? "published");
   const [progress, setProgress] = useState(0);
   const [phase, setPhase] = useState<"idle" | "uploading" | "saving">("idle");
@@ -299,6 +303,7 @@ function MediaEditor({
           title: title.trim(),
           description: description.trim(),
           category,
+          classification,
           status,
           displayRatio,
           ...(assetKey ? { assetKey } : {}),
@@ -315,6 +320,7 @@ function MediaEditor({
           title: title.trim(),
           description: description.trim(),
           category,
+          classification,
           assetKey: assetKey as string,
           thumbKey: thumbKey ?? null,
           status,
@@ -561,6 +567,21 @@ function MediaEditor({
             <Field label="Category">
               <select value={category} onChange={(event) => setCategory(event.target.value)} className={inputCls}>
                 {categories.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+
+            <Field label="Project Classification" hint="required">
+              <select
+                value={classification}
+                onChange={(event) => setClassification(event.target.value)}
+                className={inputCls}
+                required
+              >
+                {PROJECT_CLASSIFICATIONS.map((option) => (
                   <option key={option.id} value={option.id}>
                     {option.label}
                   </option>

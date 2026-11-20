@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { thumbFilter, thumbObjectPosition, thumbScale, type ThumbStyle } from "@/lib/video";
+import { classificationLabel } from "@/lib/classification";
 
 interface ScreenFrameProps {
   /** "auto" (or omitted) follows the uploaded file's real dimensions. */
@@ -13,6 +14,8 @@ interface ScreenFrameProps {
   posterUrl?: string | null;
   /** Crop/filter applied to the uploaded thumbnail. */
   thumbStyle?: ThumbStyle | null;
+  /** Saved classification, printed on the setup box under the screen. */
+  classification?: string | null;
 }
 
 export function ScreenFrame({
@@ -23,6 +26,7 @@ export function ScreenFrame({
   imageUrl,
   posterUrl,
   thumbStyle,
+  classification,
 }: ScreenFrameProps) {
   const media = imageUrl ?? posterUrl;
   const [detected, setDetected] = useState<number | null>(null);
@@ -108,8 +112,31 @@ export function ScreenFrame({
         </div>
       </div>
 
-      <div className="mx-auto mt-0 h-3 w-16 rounded-b-md bg-gradient-to-b from-neutral-800 to-neutral-900" />
-      <div className="mx-auto h-1.5 w-28 rounded-full bg-gradient-to-b from-neutral-700 to-neutral-900 shadow-md" />
+      {/* stand neck, then the miniature setup box carrying this project's classification */}
+      <div className="mx-auto h-2.5 w-14 rounded-b-md bg-gradient-to-b from-neutral-800 to-neutral-900" />
+
+      <div className="relative mx-auto w-[80%] max-w-[240px]">
+        <div className="flex items-center gap-2.5 rounded-[9px] border border-neutral-700/70 bg-gradient-to-b from-[#26272a] via-[#17181a] to-[#0a0b0c] px-2.5 py-2 shadow-[0_16px_32px_-22px_rgba(0,0,0,0.95),inset_0_1px_0_rgba(255,255,255,0.16)] transition-all duration-500 group-hover:-translate-y-0.5 group-hover:shadow-[0_20px_38px_-22px_rgba(0,0,0,1),inset_0_1px_0_rgba(255,255,255,0.24)]">
+          <span className="pointer-events-none absolute inset-x-3 top-0 h-px bg-gradient-to-r from-transparent via-white/30 to-transparent" />
+
+          <span className="relative grid h-4 w-4 shrink-0 place-items-center rounded-[4px] border border-white/15 bg-black/70">
+            <span className="h-1 w-1 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.9)] animate-pulse" />
+          </span>
+
+          <span className="min-w-0 flex-1 truncate text-[8.5px] font-semibold uppercase leading-none tracking-[0.14em] text-neutral-100 sm:text-[9px] sm:tracking-[0.16em]">
+            {classificationLabel(classification)}
+          </span>
+
+          <span className="hidden shrink-0 items-end gap-[2px] sm:flex" aria-hidden="true">
+            {[0, 1, 2].map((i) => (
+              <span key={i} className="h-2.5 w-[1.5px] rounded-full bg-white/20" />
+            ))}
+          </span>
+        </div>
+        <div className="mx-auto h-px w-[88%] bg-gradient-to-r from-transparent via-black/35 to-transparent" />
+      </div>
+
+      <div className="mx-auto mt-0.5 h-1 w-24 rounded-full bg-gradient-to-b from-neutral-700 to-neutral-900 shadow-md" />
 
       <div className="mt-3 flex items-center justify-between gap-3 px-1">
         <span className="truncate text-xs text-neutral-500">{label}</span>

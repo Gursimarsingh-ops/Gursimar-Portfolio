@@ -63,6 +63,13 @@ const ADMIN = "/api/admin";
 const GRAPHIC_CATEGORIES = new Set(["irl", "gaming", "doc", "other"]);
 const VIDEO_CATEGORIES = new Set(["gaming", "doc", "corp", "motion", "estate", "saas"]);
 
+/**
+ * How each project came to exist. Shown on the setup box beneath its screen.
+ * "non-commission" is the safe default for rows created before this field.
+ */
+const PROJECT_CLASSIFICATIONS = new Set(["commission", "recreation", "non-commission", "sample"]);
+const DEFAULT_CLASSIFICATION = "non-commission";
+
 const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 const VIDEO_TYPES = new Set(["video/mp4", "video/webm", "video/quicktime"]);
 
@@ -143,6 +150,8 @@ type ProjectRow = {
   video_style?: string | null;
   /** Declared display preset (auto, 480p … 2160p). Metadata only. */
   resolution?: string | null;
+  /** commission | recreation | non-commission | sample. */
+  classification?: string | null;
 };
 
 /** Screen layouts that can be pinned from the dashboard ("auto" follows the file). */
@@ -182,6 +191,7 @@ function ensureSortOrder(env: Env): Promise<void> {
         ["tags", "ALTER TABLE projects ADD COLUMN tags TEXT"],
         ["video_style", "ALTER TABLE projects ADD COLUMN video_style TEXT"],
         ["resolution", "ALTER TABLE projects ADD COLUMN resolution TEXT"],
+        ["classification", "ALTER TABLE projects ADD COLUMN classification TEXT"],
       ];
       for (const [name, sql] of columns) {
         if (!has.has(name)) await env.DB.prepare(sql).run();
@@ -276,6 +286,10 @@ function parseStoredStyle(raw: string | null | undefined): Record<string, unknow
   }
 }
 
+function readClassification(value: unknown, fallback = DEFAULT_CLASSIFICATION): string {
+  return typeof value === "string" && PROJECT_CLASSIFICATIONS.has(value) ? value : fallback;
+}
+
 function toPublicProject(row: ProjectRow) {
   const link = Boolean(row.source_url);
   return {
@@ -290,6 +304,7 @@ function toPublicProject(row: ProjectRow) {
     thumbStyle: parseStoredStyle(row.thumb_style),
     videoStyle: parseStoredStyle(row.video_style),
     tags: readStoredTags(row.tags),
+    classification: readClassification(row.classification),
     resolution: row.resolution ?? null,
     ratio: row.display_ratio ?? null,
     width: row.asset_width ?? null,
@@ -316,6 +331,7 @@ function toAdminProject(row: ProjectRow) {
     thumbStyle: parseStoredStyle(row.thumb_style),
     videoStyle: parseStoredStyle(row.video_style),
     tags: readStoredTags(row.tags),
+    classification: readClassification(row.classification),
     resolution: row.resolution ?? "auto",
     sortOrder: row.sort_order ?? 0,
     displayRatio: row.display_ratio ?? "auto",
@@ -625,6 +641,7 @@ function validateProjectFields(input: {
   description?: unknown;
   category?: unknown;
   status?: unknown;
+  classification?: unknown;
 }): { error: string } | null {
   if (input.kind !== "graphic" && input.kind !== "video") return { error: "Invalid project kind." };
   if (typeof input.title !== "string" || !input.title.trim() || input.title.trim().length > 120) {
@@ -640,6 +657,11 @@ function validateProjectFields(input: {
   }
   if (input.status !== undefined && input.status !== "published" && input.status !== "draft") {
     return { error: "Status must be published or draft." };
+  }
+  if (input.classification !== undefined) {
+    if (typeof input.classification !== "string" || !PROJECT_CLASSIFICATIONS.has(input.classification)) {
+      return { error: "Classification must be commission, recreation, non-commission or sample." };
+    }
   }
   return null;
 }
@@ -677,6 +699,11 @@ async function createProject(request: Request, env: Env): Promise<Response> {
   const videoStyle = readVideoStyle(body.videoStyle);
   const tags = readTags(body.tags);
   const resolution = readResolution(body.resolution, "auto");
+  /* Mandatory on create: every new project tells the public which classification it is. */
+  if (typeof body.classification !== "string" || !PROJECT_CLASSIFICATIONS.has(body.classification)) {
+    return fail("Choose a project classification.");
+  }
+  const classification = readClassification(body.classification);
   const durationSeconds =
     typeof body.durationSeconds === "number" && Number.isFinite(body.durationSeconds) && body.durationSeconds > 0
       ? Math.min(body.durationSeconds, 86400)
@@ -725,8 +752,8 @@ async function createProject(request: Request, env: Env): Promise<Response> {
   try {
     await env.DB.prepare(
       `INSERT INTO projects
-        (id, kind, title, description, category, status, asset_key, asset_type, asset_size, asset_hash, thumb_key, thumb_type, created_at, updated_at, sort_order, display_ratio, asset_width, asset_height, duration_seconds, source_url, thumb_style, tags, video_style, resolution)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        (id, kind, title, description, category, status, asset_key, asset_type, asset_size, asset_hash, thumb_key, thumb_type, created_at, updated_at, sort_order, display_ratio, asset_width, asset_height, duration_seconds, source_url, thumb_style, tags, video_style, resolution, classification)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
       .bind(
         id,
@@ -752,7 +779,8 @@ async function createProject(request: Request, env: Env): Promise<Response> {
         thumbStyle,
         tags,
         videoStyle,
-        resolution
+        resolution,
+        classification
       )
       .run();
   } catch (error) {
@@ -801,6 +829,16 @@ async function updateProject(request: Request, env: Env, id: string): Promise<Re
   const tags =
     body.tags === undefined ? existing.tags ?? null : readTags(body.tags);
   const resolution = readResolution(body.resolution, existing.resolution ?? "auto");
+  if (
+    body.classification !== undefined &&
+    (typeof body.classification !== "string" || !PROJECT_CLASSIFICATIONS.has(body.classification))
+  ) {
+    return fail("Classification must be commission, recreation, non-commission or sample.");
+  }
+  const classification =
+    body.classification === undefined
+      ? readClassification(existing.classification)
+      : readClassification(body.classification);
   const sortOrder = readSortOrder(body.sortOrder, existing.sort_order ?? 0);
   const assetWidth = body.assetWidth === undefined ? existing.asset_width ?? null : readNumber(body.assetWidth, 20000);
   const assetHeight = body.assetHeight === undefined ? existing.asset_height ?? null : readNumber(body.assetHeight, 20000);
@@ -896,7 +934,8 @@ async function updateProject(request: Request, env: Env, id: string): Promise<Re
           SET title = ?, description = ?, category = ?, status = ?, thumb_key = ?, thumb_type = ?,
               asset_key = ?, asset_type = ?, asset_size = ?, asset_hash = ?, updated_at = ?,
               display_ratio = ?, asset_width = ?, asset_height = ?, duration_seconds = ?,
-              source_url = ?, thumb_style = ?, sort_order = ?, tags = ?, video_style = ?, resolution = ?
+              source_url = ?, thumb_style = ?, sort_order = ?, tags = ?, video_style = ?, resolution = ?,
+              classification = ?
         WHERE id = ?`
     )
       .bind(
@@ -921,6 +960,7 @@ async function updateProject(request: Request, env: Env, id: string): Promise<Re
         tags,
         videoStyle,
         resolution,
+        classification,
         id
       )
       .run();

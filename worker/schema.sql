@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS projects (
   tags TEXT,
   video_style TEXT,
   resolution TEXT,
+  classification TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );

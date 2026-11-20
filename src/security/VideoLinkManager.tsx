@@ -21,6 +21,7 @@ import { cn } from "@/lib/utils";
 import { api, ApiError, uploadFile, type AdminProject, type ProjectStatus } from "@/admin/api";
 import { CATEGORY_OPTIONS } from "@/admin/categories";
 import { invalidatePublishedProjects } from "@/lib/portfolio";
+import { PROJECT_CLASSIFICATIONS, normalizeClassification } from "@/lib/classification";
 import {
   ASPECT_OPTIONS,
   VIDEO_RESOLUTIONS,
@@ -60,6 +61,7 @@ type Draft = {
   category: string;
   tags: string;
   status: ProjectStatus;
+  classification: string;
   ratio: string;
   customWidth: string;
   customHeight: string;
@@ -102,6 +104,7 @@ function blankDraft(category: string, order: number, sourceKind: SourceKind): Dr
     category,
     tags: "",
     status: "draft",
+    classification: PROJECT_CLASSIFICATIONS[0].id,
     ratio: "16/9",
     customWidth: "1920",
     customHeight: "1080",
@@ -141,6 +144,7 @@ function draftFrom(project: AdminProject): Draft {
     category: project.category,
     tags: (project.tags ?? []).join(", "),
     status: project.status,
+    classification: normalizeClassification(project.classification),
     ratio: known ? ratio : "custom",
     customWidth: String(project.assetWidth ?? 1920),
     customHeight: String(project.assetHeight ?? 1080),
@@ -387,6 +391,7 @@ export function VideoLinkManager() {
       description: draft.description.trim(),
       category: draft.category,
       status: draft.status,
+      classification: draft.classification,
       displayRatio: ratioOf(draft),
       assetWidth: draft.assetWidth,
       assetHeight: draft.assetHeight,
@@ -1072,6 +1077,24 @@ export function VideoLinkManager() {
                     </select>
                   </label>
                 </div>
+
+                <label className="block">
+                  <span className={labelCls}>Project Classification</span>
+                  <select
+                    value={draft.classification}
+                    onChange={(event) => patch({ classification: event.target.value })}
+                    className={inputCls}
+                  >
+                    {PROJECT_CLASSIFICATIONS.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="mt-1 block text-[9px] text-white/30">
+                    Printed on the setup box beneath this project&apos;s LED screen.
+                  </span>
+                </label>
 
                 <div className="grid grid-cols-2 gap-2">
                   <label className="block">

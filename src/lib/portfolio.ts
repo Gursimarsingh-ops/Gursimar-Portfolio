@@ -14,6 +14,8 @@ export interface PublicProject {
   thumbStyle?: ThumbStyle | null;
   videoStyle?: VideoStyle | null;
   tags?: string[];
+  /** commission | recreation | non-commission | sample. */
+  classification?: string | null;
   /** Display preset label only; playback quality stays with the source. */
   resolution?: string | null;
   ratio?: string | null;

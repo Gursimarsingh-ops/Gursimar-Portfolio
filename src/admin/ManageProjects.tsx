@@ -17,6 +17,7 @@ import { CATEGORY_OPTIONS } from "@/admin/categories";
 import { ProjectPreviewDialog } from "@/components/portfolio/ProjectPreviewDialog";
 import { VideoPlayerDialog } from "@/components/portfolio/VideoPlayerDialog";
 import { invalidatePublishedProjects } from "@/lib/portfolio";
+import { PROJECT_CLASSIFICATIONS, normalizeClassification } from "@/lib/classification";
 
 const MAX_THUMB = 5 * 1024 * 1024;
 const IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
@@ -100,6 +101,7 @@ function ProjectCard({
   const [title, setTitle] = useState(project.title);
   const [description, setDescription] = useState(project.description);
   const [category, setCategory] = useState(project.category);
+  const [classification, setClassification] = useState(normalizeClassification(project.classification));
   const [busy, setBusy] = useState<"save" | "status" | "thumb" | "delete" | null>(null);
   const [notice, setNotice] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -110,7 +112,8 @@ function ProjectCard({
     setTitle(project.title);
     setDescription(project.description);
     setCategory(project.category);
-  }, [project.id, project.title, project.description, project.category, project.updatedAt]);
+    setClassification(normalizeClassification(project.classification));
+  }, [project.id, project.title, project.description, project.category, project.classification, project.updatedAt]);
 
   const finish = (message?: string) => {
     invalidatePublishedProjects();
@@ -126,7 +129,12 @@ function ProjectCard({
     setBusy("save");
     setNotice(null);
     try {
-      await api.updateProject(project.id, { title: title.trim(), description: description.trim(), category });
+      await api.updateProject(project.id, {
+        title: title.trim(),
+        description: description.trim(),
+        category,
+        classification,
+      });
       finish("Changes saved.");
     } catch (err) {
       setNotice({ tone: "error", text: err instanceof Error ? err.message : "Save failed." });
@@ -271,6 +279,17 @@ function ProjectCard({
               className={cn(inputCls, "w-auto min-w-[150px] py-1.5 text-xs")}
             >
               {CATEGORY_OPTIONS[project.kind].map((option) => (
+                <option key={option.id} value={option.id}>{option.label}</option>
+              ))}
+            </select>
+
+            <select
+              value={classification}
+              onChange={(e) => setClassification(e.target.value as typeof classification)}
+              aria-label="Project classification"
+              className={cn(inputCls, "w-auto min-w-[170px] py-1.5 text-xs")}
+            >
+              {PROJECT_CLASSIFICATIONS.map((option) => (
                 <option key={option.id} value={option.id}>{option.label}</option>
               ))}
             </select>

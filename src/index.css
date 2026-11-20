@@ -9,6 +9,10 @@
 
 html {
   scroll-behavior: smooth;
+  /* Android Chrome inflates small text blocks on its own (text autosizing),
+     which collapsed the fixed-width nav wordmark. Keep the designed sizes. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 body {

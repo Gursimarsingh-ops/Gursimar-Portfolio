@@ -99,6 +99,7 @@ export function VideoPortfolio() {
               label={project.title}
               posterUrl={project.thumbUrl ?? fallbackPoster(project.sourceUrl)}
               thumbStyle={project.thumbStyle}
+              classification={project.classification}
               onClick={() =>
                 setPlaying({
                   title: project.title,

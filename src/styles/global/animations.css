@@ -581,7 +581,20 @@
 
 @keyframes delivery-ride {
   0%, 8% { left: 3%; }
-  78%, 100% { left: 84%; }
+  /* stops flush with the right edge whatever the vehicle width is */
+  78%, 100% { left: calc(100% - var(--van-w, 132px) - 3%); }
+}
+
+/* the two delivery captions share one slot and hand over as the courier arrives */
+@keyframes delivery-msg-intro {
+  0%, 60% { opacity: 1; transform: translateY(0); }
+  68%, 100% { opacity: 0; transform: translateY(-4px); }
+}
+
+@keyframes delivery-msg-final {
+  0%, 70% { opacity: 0; transform: translateY(5px); }
+  80%, 92% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(0); }
 }
 
 @keyframes delivery-rider-bob {

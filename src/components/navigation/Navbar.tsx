@@ -103,10 +103,10 @@ export function Navbar({ onHire }: { onHire: () => void }) {
             <span className="relative">GS</span>
           </span>
           <span className="flex min-w-0 flex-col leading-none">
-            <span className="truncate whitespace-nowrap text-[10px] font-semibold tracking-[0.1em] min-[360px]:text-[11px] sm:text-[12px] sm:tracking-[0.22em]">
+            <span className="whitespace-nowrap text-[11px] font-extrabold tracking-[0.06em] [-webkit-text-size-adjust:100%] min-[360px]:text-[12px] sm:text-[12.5px] sm:tracking-[0.16em]">
               Gursimar Singh
             </span>
-            <span className="mt-1 truncate whitespace-nowrap text-[7px] uppercase tracking-[0.16em] opacity-45 sm:text-[8px] sm:tracking-[0.32em]">
+            <span className="mt-1 whitespace-nowrap text-[7px] font-semibold uppercase tracking-[0.14em] opacity-55 [-webkit-text-size-adjust:100%] sm:text-[8px] sm:tracking-[0.3em]">
               Video · Design
             </span>
           </span>

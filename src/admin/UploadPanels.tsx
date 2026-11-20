@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, FolderOpen, ImagePlus, Loader2, Trash2, Upload, Video } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api, formatBytes, uploadFile, type ProjectStatus } from "@/admin/api";
+import { PROJECT_CLASSIFICATIONS } from "@/lib/classification";
 
 const IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 const VIDEO_TYPES = ["video/mp4", "video/webm", "video/quicktime"];
@@ -80,7 +81,8 @@ function GraphicUpload({ categories, onUploaded }: { categories: { id: string; l
   const [items, setItems] = useState<Item[]>([]);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [category, setCategory] = useState(categories[0]?.id ?? "irl");
+  const [category, setCategory] = useState(categories[0]?.id ?? "gaming");
+  const [classification, setClassification] = useState<string>(PROJECT_CLASSIFICATIONS[0].id);
   const [status, setStatus] = useState<ProjectStatus>("published");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -170,6 +172,7 @@ function GraphicUpload({ categories, onUploaded }: { categories: { id: string; l
           title: finalTitle,
           description: description.trim(),
           category,
+          classification,
           assetKey: upload.key,
           status,
         });
@@ -301,6 +304,19 @@ function GraphicUpload({ categories, onUploaded }: { categories: { id: string; l
             </select>
           </Field>
 
+          <Field label="Project Classification" hint="required">
+            <select
+              value={classification}
+              onChange={(e) => setClassification(e.target.value)}
+              className={inputCls}
+              required
+            >
+              {PROJECT_CLASSIFICATIONS.map((option) => (
+                <option key={option.id} value={option.id}>{option.label}</option>
+              ))}
+            </select>
+          </Field>
+
           <Field label="Visibility">
             <select value={status} onChange={(e) => setStatus(e.target.value as ProjectStatus)} className={inputCls}>
               <option value="published">Publish immediately</option>
@@ -348,6 +364,7 @@ function VideoUpload({ categories, onUploaded }: { categories: { id: string; lab
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState(categories[0]?.id ?? "gaming");
+  const [classification, setClassification] = useState<string>(PROJECT_CLASSIFICATIONS[0].id);
   const [status, setStatus] = useState<ProjectStatus>("published");
   const [progress, setProgress] = useState(0);
   const [phase, setPhase] = useState<"idle" | "uploading" | "publishing" | "done">("idle");
@@ -439,6 +456,7 @@ function VideoUpload({ categories, onUploaded }: { categories: { id: string; lab
         title: title.trim(),
         description: description.trim(),
         category,
+        classification,
         assetKey: uploaded.key,
         thumbKey,
         status,
@@ -568,6 +586,19 @@ function VideoUpload({ categories, onUploaded }: { categories: { id: string; lab
         <Field label="Category">
           <select value={category} onChange={(e) => setCategory(e.target.value)} className={inputCls}>
             {categories.map((option) => (
+              <option key={option.id} value={option.id}>{option.label}</option>
+            ))}
+          </select>
+        </Field>
+
+        <Field label="Project Classification" hint="required">
+          <select
+            value={classification}
+            onChange={(e) => setClassification(e.target.value)}
+            className={inputCls}
+            required
+          >
+            {PROJECT_CLASSIFICATIONS.map((option) => (
               <option key={option.id} value={option.id}>{option.label}</option>
             ))}
           </select>

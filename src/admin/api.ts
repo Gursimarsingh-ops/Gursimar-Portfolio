@@ -21,6 +21,8 @@ export interface AdminProject {
   tags: string[];
   /** Display preset label (auto, 480p … 2160p); nothing is transcoded. */
   resolution: string;
+  /** commission | recreation | non-commission | sample. */
+  classification: string;
   sortOrder: number;
   displayRatio: string;
   assetWidth: number | null;
@@ -438,6 +440,7 @@ export const api = {
     assetKey?: string;
     thumbKey?: string | null;
     status?: ProjectStatus;
+    classification: string;
     displayRatio?: string;
     assetWidth?: number | null;
     assetHeight?: number | null;
@@ -461,6 +464,7 @@ export const api = {
       description: string;
       category: string;
       status: ProjectStatus;
+      classification: string;
       thumbKey: string | null;
       assetKey: string;
       displayRatio: string;

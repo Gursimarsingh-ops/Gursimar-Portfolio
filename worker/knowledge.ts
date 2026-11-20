@@ -38,7 +38,7 @@ SOFTWARE
 PORTFOLIO WORK
 - Video categories: Gaming Video Editing (4), Documentary Editing (3), Corporate Videos (3),
   Motion Graphics (4), Real Estate Videos (3), SaaS Animations (3).
-- Graphic design categories: IRL Thumbnails (8), Gaming Thumbnails (8),
+- Graphic design categories, in this order: Thumbnails (8), IRL Thumbnails (8),
   Documentary Thumbnails (5), Other Graphic Design (5) — 26 total.
 - The site has dedicated Work, Video, Skills, Studio (software) and Contact sections.
 

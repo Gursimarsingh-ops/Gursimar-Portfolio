@@ -91,6 +91,7 @@ export function GraphicPortfolio() {
               ratio={project.ratio ?? "auto"}
               label={project.title}
               imageUrl={project.mediaUrl}
+              classification={project.classification}
               onClick={() =>
                 setPreview({
                   title: project.title,
