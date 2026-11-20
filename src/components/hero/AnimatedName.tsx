@@ -1,11 +1,20 @@
 import { useEffect, useRef, useState } from "react";
+import { cn } from "@/lib/utils";
 
-const LINE1 = "GurSimar";
+const LINE1 = "Gursimar";
 const LINE2 = "Singh";
 const TOTAL = LINE1.length + LINE2.length;
 
 type Pos = { x: number; y: number };
 
+/**
+ * Hero wordmark.
+ *
+ * The reveal keeps the original typing concept: a cursor travels the name and
+ * each letter resolves in sequence. The un-resolved state is a solid black
+ * outline rather than a pale grey fill, so the branding stays crisp and
+ * readable at every frame of the animation instead of fading away.
+ */
 export function AnimatedName() {
   const [progress, setProgress] = useState(0);
   const [dotPos, setDotPos] = useState<Pos & { visible: boolean }>({
@@ -97,7 +106,7 @@ export function AnimatedName() {
           schedule(() => {
             if (cancelled) return;
             setDotPos((p) => ({ ...p, visible: false }));
-          }, 300);
+          }, 320);
         }
       }, 120);
     };
@@ -121,28 +130,29 @@ export function AnimatedName() {
           ref={(el) => {
             letterRefs.current[globalIdx] = el;
           }}
-          className="relative inline-block"
+          className={cn(
+            "inline-block transition-[color,transform] duration-[420ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
+            filled ? "translate-y-0 text-neutral-950" : "translate-y-[0.035em] text-transparent"
+          )}
+          style={{
+            WebkitTextStroke: filled ? "0px transparent" : "1.1px #0a0a0a",
+            paintOrder: "stroke fill",
+          }}
         >
-          <span className="text-neutral-200">{ch}</span>
-          <span
-            className="absolute inset-0 text-neutral-950 transition-opacity duration-300"
-            style={{ opacity: filled ? 1 : 0 }}
-          >
-            {ch}
-          </span>
+          {ch}
         </span>
       );
     });
 
   return (
     <div ref={containerRef} className="relative inline-block">
-      <h1 className="whitespace-nowrap font-serif text-[2.5rem] font-black leading-[0.9] tracking-[-0.02em] min-[360px]:text-5xl sm:text-7xl md:text-8xl lg:text-9xl">
+      <h1 className="whitespace-nowrap font-serif text-[2.6rem] font-black leading-[0.88] tracking-[-0.035em] min-[360px]:text-5xl sm:text-7xl md:text-8xl lg:text-9xl">
         <span className="block">{renderLine(LINE1, 0)}</span>
         <span className="block">{renderLine(LINE2, LINE1.length)}</span>
       </h1>
       {dotPos.visible && (
         <span
-          className="pointer-events-none absolute h-3 w-3 rounded-full bg-neutral-950 shadow-lg transition-all duration-150 ease-out"
+          className="pointer-events-none absolute h-2.5 w-2.5 rounded-full bg-neutral-950 ring-2 ring-white transition-all duration-150 ease-out"
           style={{
             left: dotPos.x,
             top: dotPos.y,

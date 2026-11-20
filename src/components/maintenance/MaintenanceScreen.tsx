@@ -73,7 +73,7 @@ export function MaintenanceScreen({ onRecheck }: { onRecheck?: () => Promise<boo
             GS
           </span>
           <div className="leading-none">
-            <p className="font-serif text-base tracking-tight text-white">GurSimar Singh</p>
+            <p className="font-serif text-base tracking-tight text-white">Gursimar Singh</p>
             <p className="mt-1.5 text-[8px] uppercase tracking-[0.28em] text-white/40">Video Editor / Graphic Designer</p>
           </div>
         </div>

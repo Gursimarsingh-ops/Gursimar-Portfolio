@@ -184,8 +184,8 @@ export function StudioScene({ portraitSrc, className }: StudioSceneProps) {
       <Canvas
         frameloop={onScreen ? "always" : "never"}
         shadows={wide}
-        dpr={wide ? [1, 1.8] : [1, 1.2]}
-        gl={{ antialias: wide, alpha: true, powerPreference: "high-performance" }}
+        dpr={wide ? [1, 1.8] : [1, 2]}
+        gl={{ antialias: true, alpha: true, powerPreference: "high-performance" }}
         camera={{ fov: CAMERA_FOV, near: 0.1, far: 60, position: [0, 0.55, MIN_CAMERA_Z] }}
       >
         <fog attach="fog" args={["#090b0e", 7.5, 15]} />

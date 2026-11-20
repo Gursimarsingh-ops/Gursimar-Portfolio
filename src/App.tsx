@@ -47,7 +47,7 @@ function BootScreen() {
     <div className="grid min-h-screen place-items-center bg-white text-neutral-900 antialiased">
       <div className="flex flex-col items-center gap-3">
         <span className="h-8 w-8 animate-spin rounded-full border-2 border-neutral-900/15 border-t-neutral-900/70" />
-        <p className="text-[10px] uppercase tracking-[0.28em] text-neutral-400">GurSimar Singh</p>
+        <p className="text-[10px] uppercase tracking-[0.28em] text-neutral-400">Gursimar Singh</p>
       </div>
     </div>
   );

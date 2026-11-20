@@ -30,7 +30,7 @@ export function Hero() {
               <span className="pointer-events-none absolute inset-x-5 top-0 h-px bg-gradient-to-r from-transparent via-white to-transparent" />
               <span className="pointer-events-none absolute -left-8 top-0 h-full w-16 -skew-x-12 bg-white/50 blur-md" />
               <span className="pointer-events-none absolute inset-0 bg-[radial-gradient(120%_120%_at_20%_-20%,rgba(255,255,255,0.9),transparent_60%)]" />
-              <p className="relative bg-gradient-to-b from-neutral-900 via-neutral-800 to-neutral-500 bg-clip-text text-[13px] font-semibold uppercase tracking-[0.22em] text-transparent md:text-sm">
+              <p className="relative bg-gradient-to-b from-neutral-900 via-neutral-800 to-neutral-500 bg-clip-text text-[11px] font-semibold uppercase tracking-[0.14em] text-transparent min-[380px]:text-[12px] min-[380px]:tracking-[0.18em] md:text-sm md:tracking-[0.22em]">
                 Video Editor &amp; Graphic Designer
               </p>
             </div>

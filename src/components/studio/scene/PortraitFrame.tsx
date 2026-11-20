@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useThree } from "@react-three/fiber";
 import { ClampToEdgeWrapping, SRGBColorSpace, TextureLoader, type Texture } from "three";
 import { FRAME } from "./theme";
 
@@ -13,6 +14,9 @@ export interface PortraitFrameProps {
  */
 export function PortraitFrame({ imageUrl }: PortraitFrameProps) {
   const [texture, setTexture] = useState<Texture | null>(null);
+  /* Full anisotropic filtering keeps the photo crisp when the frame is small,
+     which is exactly what happens on phones and tablets. */
+  const maxAnisotropy = useThree((state) => state.gl.capabilities.getMaxAnisotropy());
 
   const setW = FRAME.width;
   const setH = FRAME.height;
@@ -38,7 +42,7 @@ export function PortraitFrame({ imageUrl }: PortraitFrameProps) {
           return;
         }
         loaded.colorSpace = SRGBColorSpace;
-        loaded.anisotropy = 4;
+        loaded.anisotropy = Math.max(4, Math.min(8, maxAnisotropy));
         loaded.wrapS = loaded.wrapT = ClampToEdgeWrapping;
 
         // Cover-crop so the photo never stretches inside the frame.
@@ -68,7 +72,7 @@ export function PortraitFrame({ imageUrl }: PortraitFrameProps) {
     return () => {
       active = false;
     };
-  }, [imageUrl, innerW, innerH]);
+  }, [imageUrl, innerW, innerH, maxAnisotropy]);
 
   return (
     <group position={[0, FRAME.centerY, 0]}>

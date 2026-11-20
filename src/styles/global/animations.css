@@ -508,6 +508,227 @@
   animation: maintenance-rise 0.9s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
+/* ================================================================== */
+/* Visual enhancement pass                                            */
+/* ================================================================== */
+
+/* ---------- motion graphics: sequential logo build ---------- */
+
+@keyframes mg-node-left {
+  0%, 4% { opacity: 0; left: 16%; transform: translate(-50%, -50%) scale(0.55); }
+  11%, 52% { opacity: 1; left: 16%; transform: translate(-50%, -50%) scale(1); }
+  63%, 72% { opacity: 0; left: 50%; transform: translate(-50%, -50%) scale(0.45); }
+  100% { opacity: 0; left: 16%; transform: translate(-50%, -50%) scale(0.55); }
+}
+
+@keyframes mg-node-center {
+  0%, 21% { opacity: 0; left: 50%; transform: translate(-50%, -50%) scale(0.55); }
+  29%, 52% { opacity: 1; left: 50%; transform: translate(-50%, -50%) scale(1); }
+  63%, 72% { opacity: 0; left: 50%; transform: translate(-50%, -50%) scale(0.45); }
+  100% { opacity: 0; left: 50%; transform: translate(-50%, -50%) scale(0.55); }
+}
+
+@keyframes mg-node-right {
+  0%, 43% { opacity: 0; left: 84%; transform: translate(-50%, -50%) scale(0.55); }
+  51%, 52% { opacity: 1; left: 84%; transform: translate(-50%, -50%) scale(1); }
+  63%, 72% { opacity: 0; left: 50%; transform: translate(-50%, -50%) scale(0.45); }
+  100% { opacity: 0; left: 84%; transform: translate(-50%, -50%) scale(0.55); }
+}
+
+@keyframes mg-draw-left {
+  0%, 10% { stroke-dashoffset: 1; }
+  26%, 94% { stroke-dashoffset: 0; }
+  99%, 100% { stroke-dashoffset: 1; }
+}
+
+@keyframes mg-draw-right {
+  0%, 30% { stroke-dashoffset: 1; }
+  46%, 94% { stroke-dashoffset: 0; }
+  99%, 100% { stroke-dashoffset: 1; }
+}
+
+@keyframes mg-final {
+  0%, 58% { opacity: 0; transform: translate(-50%, -50%) scale(0.5) rotate(-16deg); }
+  69%, 95% { opacity: 1; transform: translate(-50%, -50%) scale(1) rotate(0deg); }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(0.94) rotate(0deg); }
+}
+
+@keyframes mg-halo {
+  0%, 56% { opacity: 0; transform: translate(-50%, -50%) scale(0.55); }
+  64% { opacity: 0.5; }
+  78%, 100% { opacity: 0; transform: translate(-50%, -50%) scale(1.55); }
+}
+
+@keyframes mg-wordmark {
+  0%, 68% { opacity: 0; transform: translate(-50%, 4px); }
+  80%, 95% { opacity: 1; transform: translate(-50%, 0); }
+  100% { opacity: 0; transform: translate(-50%, 0); }
+}
+
+@keyframes mg-sweep {
+  0% { left: 0%; opacity: 0; }
+  8% { opacity: 1; }
+  92% { opacity: 1; }
+  100% { left: 100%; opacity: 0; }
+}
+
+/* ---------- workflow: delivery tracking panel ---------- */
+
+@keyframes delivery-panel-in {
+  0% { opacity: 0; transform: translateY(18px) scale(0.99); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes delivery-ride {
+  0%, 8% { left: 3%; }
+  78%, 100% { left: 84%; }
+}
+
+@keyframes delivery-rider-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-1.6px); }
+}
+
+@keyframes delivery-wheel {
+  to { transform: rotate(-360deg); }
+}
+
+@keyframes delivery-road {
+  to { background-position: -72px 0; }
+}
+
+@keyframes delivery-fill {
+  0%, 8% { width: 2%; }
+  78%, 100% { width: 100%; }
+}
+
+@keyframes delivery-knob {
+  0%, 8% { left: 2%; }
+  78%, 100% { left: 100%; }
+}
+
+@keyframes delivery-package {
+  0%, 100% { transform: translateY(0) rotate(-1.5deg); }
+  50% { transform: translateY(-1.5px) rotate(1.5deg); }
+}
+
+@keyframes delivery-done {
+  0%, 78% { opacity: 0; transform: scale(0.7); }
+  88%, 100% { opacity: 1; transform: scale(1); }
+}
+
+@keyframes delivery-ping {
+  0% { transform: scale(0.6); opacity: 0.45; }
+  100% { transform: scale(1.9); opacity: 0; }
+}
+
+/* ---------- contact channel glyphs ---------- */
+
+@keyframes mail-flap-open {
+  0%, 100% { transform: rotateX(0deg); }
+  50% { transform: rotateX(-158deg); }
+}
+
+@keyframes mail-letter-out {
+  0%, 100% { transform: translateY(2px); opacity: 0; }
+  45%, 80% { transform: translateY(-2.5px); opacity: 1; }
+}
+
+@keyframes discord-wave {
+  0%, 100% { transform: translateY(0); opacity: 0.4; }
+  40% { transform: translateY(-1.6px); opacity: 1; }
+}
+
+@keyframes discord-ring {
+  0% { transform: scale(0.55); opacity: 0.5; }
+  100% { transform: scale(1.9); opacity: 0; }
+}
+
+@keyframes behance-sweep {
+  0% { transform: translateX(-130%); opacity: 0; }
+  25% { opacity: 0.9; }
+  100% { transform: translateX(130%); opacity: 0; }
+}
+
+@keyframes card-link-travel {
+  0% { left: 2%; opacity: 0; }
+  12% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { left: 98%; opacity: 0; }
+}
+
+/* ---------- premium booking sheet ---------- */
+
+@keyframes sheet-in {
+  0% { opacity: 0; transform: translateY(26px) scale(0.972); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes sheet-rule {
+  0% { transform: scaleX(0); }
+  100% { transform: scaleX(1); }
+}
+
+@keyframes field-rise {
+  0% { opacity: 0; transform: translateY(12px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes seal-in {
+  0% { opacity: 0; transform: scale(1.3) rotate(-14deg); }
+  55% { opacity: 1; transform: scale(0.97) rotate(-7deg); }
+  75% { transform: scale(1.02) rotate(-7deg); }
+  100% { opacity: 1; transform: scale(1) rotate(-7deg); }
+}
+
+@keyframes success-check {
+  0% { stroke-dashoffset: 44; }
+  65%, 100% { stroke-dashoffset: 0; }
+}
+
+@keyframes success-ring {
+  0% { transform: scale(0.65); opacity: 0.5; }
+  100% { transform: scale(1.75); opacity: 0; }
+}
+
+@keyframes sheet-send {
+  0% { transform: translateX(-120%) skewX(-14deg); opacity: 0; }
+  30% { opacity: 0.9; }
+  100% { transform: translateX(120%) skewX(-14deg); opacity: 0; }
+}
+
+/* ---------- assistant refinements ---------- */
+
+@keyframes typing-dot {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.35; }
+  30% { transform: translateY(-3px); opacity: 1; }
+}
+
+@keyframes assistant-halo {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes assistant-pulse {
+  0%, 100% { opacity: 0.45; transform: scale(0.94); }
+  50% { opacity: 1; transform: scale(1.06); }
+}
+
+/* Reduced motion: the logo build resolves straight to its composed lockup. */
+@media (prefers-reduced-motion: reduce) {
+  .mg-scene .mg-node { opacity: 0 !important; }
+  .mg-scene .mg-halo { opacity: 0 !important; }
+  .mg-scene .mg-final-mark {
+    opacity: 1 !important;
+    transform: translate(-50%, -50%) scale(1) rotate(0deg) !important;
+  }
+  .mg-scene .mg-wordmark {
+    opacity: 1 !important;
+    transform: translate(-50%, 0) !important;
+  }
+  .mg-scene svg line { stroke-dashoffset: 0 !important; }
+}
+
 /* Pause decorative animations until their card is explored. */
 .anim-paused,
 .anim-paused * {

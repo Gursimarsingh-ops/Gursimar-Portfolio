@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState, type ComponentType } from "react";
-import { Mail, MessageCircle, ArrowUpRight, Check, Copy } from "lucide-react";
+import {
+  Mail,
+  MailOpen,
+  MessageCircle,
+  ArrowUpRight,
+  Check,
+  Copy,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const GMAIL = "gursimarsingh9390@gmail.com";
@@ -17,7 +24,48 @@ function BehanceMark({ className }: { className?: string }) {
   );
 }
 
+/** Envelope that opens and releases a delivered message on hover/focus. */
+function MailGlyph() {
+  return (
+    <span className="relative block h-5 w-5">
+      <Mail className="absolute inset-0 h-5 w-5 transition-all duration-300 group-hover:-translate-y-[1px] group-hover:opacity-0" />
+      <MailOpen className="absolute inset-0 h-5 w-5 opacity-0 transition-all duration-300 group-hover:opacity-100" />
+      <span className="mail-letter absolute left-1/2 top-1/2 h-[2px] w-[9px] -translate-x-1/2 rounded-[1px] bg-white/90 opacity-0" />
+    </span>
+  );
+}
+
+/** Message bubble with a live activity signal. */
+function DiscordGlyph() {
+  return (
+    <span className="relative block h-5 w-5">
+      <span className="absolute -inset-2 rounded-full border border-white/40 opacity-0 group-hover:opacity-100 group-hover:[animation:discord-ring_1.8s_ease-out_infinite]" />
+      <MessageCircle className="relative h-5 w-5" />
+      <span className="absolute left-1/2 top-1/2 flex -translate-x-1/2 translate-y-[1px] items-center gap-[2px]">
+        {[0, 1, 2].map((i) => (
+          <span
+            key={i}
+            className="discord-dot h-[2px] w-[2px] rounded-full bg-white"
+            style={{ animationDelay: `${i * 0.16}s` }}
+          />
+        ))}
+      </span>
+    </span>
+  );
+}
+
+/** Behance mark with a controlled light sweep across the letterforms. */
+function BehanceGlyph() {
+  return (
+    <span className="relative block h-5 w-5 overflow-hidden">
+      <BehanceMark className="relative h-5 w-5 transition-transform duration-500 group-hover:scale-105" />
+      <span className="behance-sweep pointer-events-none absolute inset-y-0 -left-1/2 w-1/2 -skew-x-12 bg-gradient-to-r from-transparent via-neutral-900/70 to-transparent opacity-0 group-hover:opacity-100" />
+    </span>
+  );
+}
+
 type Channel = {
+  kind: "mail" | "discord" | "behance";
   label: string;
   value: string;
   note: string;
@@ -28,25 +76,28 @@ type Channel = {
 
 const CHANNELS: Channel[] = [
   {
+    kind: "mail",
     label: "Gmail",
     value: GMAIL,
     note: "Opens a new email",
-    icon: (props) => <Mail {...props} />,
+    icon: () => <MailGlyph />,
     href: `mailto:${GMAIL}`,
   },
   {
+    kind: "discord",
     label: "Discord",
     value: DISCORD,
     note: "Click to copy username",
-    icon: (props) => <MessageCircle {...props} />,
+    icon: () => <DiscordGlyph />,
     href: null,
     copyValue: DISCORD,
   },
   {
+    kind: "behance",
     label: "Behance",
     value: "View portfolio",
     note: "Opens in a new tab",
-    icon: (props) => <BehanceMark {...props} />,
+    icon: () => <BehanceGlyph />,
     href: BEHANCE_URL,
   },
 ];
@@ -123,6 +174,9 @@ function ChannelCard({ channel, delay }: { channel: Channel; delay: number }) {
       <span className="pointer-events-none absolute inset-x-5 top-0 h-px bg-gradient-to-r from-transparent via-white to-transparent" />
       {/* hover illumination */}
       <span className="pointer-events-none absolute -inset-px rounded-2xl bg-[radial-gradient(120%_110%_at_50%_-20%,rgba(255,255,255,0.95),transparent_62%)] opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
+      {/* precision corner ticks */}
+      <span className="pointer-events-none absolute left-2.5 top-2.5 h-2 w-2 border-l border-t border-neutral-300 transition-colors duration-500 group-hover:border-neutral-900/45" />
+      <span className="pointer-events-none absolute bottom-2.5 right-2.5 h-2 w-2 border-b border-r border-neutral-300 transition-colors duration-500 group-hover:border-neutral-900/45" />
 
       <div className="relative flex items-start justify-between gap-3">
         <span className="relative grid h-11 w-11 place-items-center rounded-xl border border-white/10 bg-gradient-to-b from-neutral-700 via-neutral-800 to-neutral-950 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.28),0_14px_26px_-18px_rgba(0,0,0,0.95)] transition-all duration-500 group-hover:-translate-y-1 group-hover:rotate-[-4deg] group-hover:shadow-[0_20px_34px_-18px_rgba(0,0,0,0.9)]">
@@ -150,12 +204,8 @@ function ChannelCard({ channel, delay }: { channel: Channel; delay: number }) {
       </div>
 
       <div className="relative mt-7">
-        <p className="text-[9px] uppercase tracking-[0.26em] text-neutral-400">
-          {channel.label}
-        </p>
-        <p className="mt-2 break-all text-sm font-medium leading-snug text-neutral-900">
-          {channel.value}
-        </p>
+        <p className="text-[9px] uppercase tracking-[0.26em] text-neutral-400">{channel.label}</p>
+        <p className="mt-2 break-all text-sm font-medium leading-snug text-neutral-900">{channel.value}</p>
         <span className="mt-3 flex items-center gap-1.5">
           <span
             className={cn(
@@ -177,7 +227,7 @@ function ChannelCard({ channel, delay }: { channel: Channel; delay: number }) {
   );
 
   const shared = cn(
-    "group relative block h-full overflow-hidden rounded-2xl border border-neutral-200/80 bg-white/65 p-5 text-left shadow-[inset_0_1px_0_rgba(255,255,255,0.95),0_24px_50px_-38px_rgba(0,0,0,0.6)] ring-1 ring-white/70 backdrop-blur-md",
+    "group relative flex h-full min-h-[186px] flex-col justify-between overflow-hidden rounded-2xl border border-neutral-200/80 bg-white/65 p-5 text-left shadow-[inset_0_1px_0_rgba(255,255,255,0.95),0_24px_50px_-38px_rgba(0,0,0,0.6)] ring-1 ring-white/70 backdrop-blur-md",
     "transition-all duration-500 ease-out hover:-translate-y-1.5 hover:border-neutral-900/25 hover:bg-white/90 hover:shadow-[0_34px_64px_-32px_rgba(0,0,0,0.5)] hover:ring-neutral-900/10",
     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-900 focus-visible:ring-offset-2"
   );
@@ -320,12 +370,30 @@ export function Contact({ onStartProject }: { onStartProject: () => void }) {
             </div>
 
             <div className="lg:col-span-7">
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {/* motion-graphic link rail tying the three channels together */}
+              <div
+                className={cn(
+                  "relative mb-5 hidden h-px bg-gradient-to-r from-transparent via-neutral-300 to-transparent transition-all delay-100 duration-700 sm:block",
+                  inView ? "opacity-100" : "opacity-0"
+                )}
+                aria-hidden="true"
+              >
+                <span className="absolute -top-[3px] left-0 h-[7px] w-[7px] rotate-45 rounded-[1px] bg-neutral-900/80" style={{ animation: "card-link-travel 8s linear infinite" }} />
+                {[0, 50, 100].map((left) => (
+                  <span
+                    key={left}
+                    className="absolute top-1/2 h-[3px] w-[3px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-neutral-400"
+                    style={{ left: `${left}%` }}
+                  />
+                ))}
+              </div>
+
+              <div className="grid grid-cols-1 items-stretch gap-4 sm:grid-cols-2 xl:grid-cols-3">
                 {CHANNELS.map((c, i) => (
                   <div
                     key={c.label}
                     className={cn(
-                      "transition-all duration-700",
+                      "flex transition-all duration-700",
                       inView ? "translate-y-0 opacity-100" : "translate-y-4 opacity-0"
                     )}
                     style={{ transitionDelay: `${150 + i * 90}ms` }}

@@ -60,7 +60,7 @@ export function Footer() {
               </span>
               <div>
                 <p className="font-serif text-xl leading-none tracking-tight text-white">
-                  GurSimar Singh
+                  Gursimar Singh
                 </p>
                 <p className="mt-1.5 text-[9px] uppercase tracking-[0.26em] text-white/40">
                   Video Editor / Graphic Designer

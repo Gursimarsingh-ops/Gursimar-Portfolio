@@ -1,6 +1,6 @@
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
-import { AdditiveBlending, DoubleSide, type Mesh } from "three";
+import { AdditiveBlending, DoubleSide, type Mesh, type MeshStandardMaterial } from "three";
 import { computeElbow, Segment } from "./geometry";
 import { useRobotMaterials, type RobotMaterials } from "./materials";
 import { FRAME, RIG, type RobotTheme, type ThrusterStyle, type Vec3 } from "./theme";
@@ -98,6 +98,9 @@ function Body({ robot, materials: m }: { robot: RobotTheme; materials: RobotMate
       <mesh position={[0, 0.6, 0.233]} material={m.eye}>
         <circleGeometry args={[0.045, 24]} />
       </mesh>
+
+      <ChargingBay robot={robot} />
+
       <mesh position={[-0.225, 0.72, 0.19]} material={m.shellDark}>
         <boxGeometry args={[0.07, 0.22, 0.04]} />
       </mesh>
@@ -136,6 +139,113 @@ function Body({ robot, materials: m }: { robot: RobotTheme; materials: RobotMate
       </mesh>
 
       <Head robot={robot} materials={m} />
+    </group>
+  );
+}
+
+/**
+ * Chest charging bay.
+ *
+ * Four machined cells fill in sequence while a conduit above them carries an
+ * energy pulse toward the core. Each unit runs its own cycle length and phase,
+ * so ATLAS and VEGA power up independently rather than sharing one animation.
+ * Nothing is moved or replaced — the bay sits inside the existing chest panel.
+ */
+function ChargingBay({ robot }: { robot: RobotTheme }) {
+  const cells = useRef<Mesh[]>([]);
+  const conduit = useRef<Mesh>(null);
+  const core = useRef<Mesh>(null);
+  const reduced = useRef(false);
+
+  useEffect(() => {
+    reduced.current = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  }, []);
+
+  const COUNT = 4;
+  const cycle = robot.id === "a" ? 7.4 : 10.8;
+  const segmentWidth = 0.046;
+  const gap = 0.014;
+  const totalWidth = COUNT * segmentWidth + (COUNT - 1) * gap;
+  const originX = -totalWidth / 2 + segmentWidth / 2;
+
+  useFrame(({ clock }) => {
+    const t = reduced.current
+      ? 0.72
+      : ((clock.elapsedTime / cycle + robot.phase / (Math.PI * 2)) % 1);
+
+    // ATLAS charges left to right; VEGA fills evenly across the bay.
+    const filled = robot.id === "a" ? t * COUNT * 1.05 : t * COUNT * 0.92;
+
+    cells.current.forEach((cell, index) => {
+      if (!cell) return;
+      const material = cell.material as MeshStandardMaterial;
+      const rise = robot.id === "a" ? 3.5 : 2.2;
+      const level = Math.min(Math.max((filled - index) * rise, 0), 1);
+      material.emissiveIntensity = 0.12 + level * 2.1;
+      cell.scale.y = 0.78 + level * 0.22;
+    });
+
+    if (conduit.current) {
+      const material = conduit.current.material as MeshStandardMaterial;
+      const travel = Math.abs(Math.sin(t * Math.PI * 2));
+      material.opacity = 0.2 + travel * 0.6;
+    }
+
+    if (core.current) {
+      const pulse = 0.5 + 0.5 * Math.sin(clock.elapsedTime * (robot.id === "a" ? 3.2 : 2.1) + robot.phase);
+      core.current.scale.setScalar(0.8 + pulse * 0.5);
+    }
+  });
+
+  return (
+    <group position={[0, 0.478, 0.235]}>
+      {/* Bay housing sits inside the existing chest plate */}
+      <mesh position={[0, 0, -0.006]}>
+        <boxGeometry args={[totalWidth + 0.05, 0.075, 0.014]} />
+        <meshStandardMaterial color="#0a0b0e" roughness={0.6} metalness={0.4} />
+      </mesh>
+
+      {/* Charge cells */}
+      {Array.from({ length: COUNT }).map((_, index) => (
+        <mesh
+          key={index}
+          position={[originX + index * (segmentWidth + gap), 0, 0.006]}
+          ref={(mesh) => {
+            if (mesh) cells.current[index] = mesh;
+          }}
+        >
+          <boxGeometry args={[segmentWidth, 0.042, 0.008]} />
+          <meshStandardMaterial
+            color={robot.mouth}
+            emissive={robot.mouth}
+            emissiveIntensity={0.12}
+            roughness={0.35}
+            metalness={0.1}
+            toneMapped={false}
+          />
+        </mesh>
+      ))}
+
+      {/* Energy conduit running from the bay to the core */}
+      <mesh ref={conduit} position={[0, 0.052, 0.008]}>
+        <boxGeometry args={[totalWidth, 0.008, 0.006]} />
+        <meshStandardMaterial
+          color={robot.eye}
+          emissive={robot.eye}
+          emissiveIntensity={1.4}
+          transparent
+          opacity={0.4}
+          toneMapped={false}
+        />
+      </mesh>
+
+      {/* Charging core beacon */}
+      <mesh ref={core} position={[totalWidth / 2 + 0.035, 0, 0.004]}>
+        <sphereGeometry args={[0.017, 14, 12]} />
+        <meshStandardMaterial color={robot.eye} emissive={robot.eye} emissiveIntensity={2.2} toneMapped={false} />
+      </mesh>
+
+      <pointLight position={[0, 0, 0.1]} color={robot.mouth} intensity={0.16} distance={0.5} decay={2} />
     </group>
   );
 }

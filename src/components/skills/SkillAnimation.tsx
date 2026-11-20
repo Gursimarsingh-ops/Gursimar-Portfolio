@@ -357,83 +357,153 @@ function GraphicAnim({ className, active }: AnimProps) {
   );
 }
 
-/* ------------------------------------------------------------------ */
-/* 03 · Motion graphics — logo build sequence                           */
-/* ------------------------------------------------------------------ */
 function MotionAnim({ className, active }: AnimProps) {
+  /*
+   * The card pauses its animation until it is explored, so the resting state is
+   * a clean three-mark layout: every stage sits in its own slot with its
+   * connector drawn. Only the explored card runs the full build and merge.
+   */
+  const anim = (name: string) => (active ? { animation: name } : undefined);
+
   return (
-    <Frame className={className} active={active}>
+    <Frame className={cn(className, "mg-scene")} active={active}>
       <div className="absolute inset-0 bg-[radial-gradient(120%_120%_at_50%_0%,#2a2233_0%,#141019_55%,#060409_100%)]" />
-      <div className="absolute inset-0 opacity-[0.14] [background-image:linear-gradient(to_right,#fff_1px,transparent_1px),linear-gradient(to_bottom,#fff_1px,transparent_1px)] [background-size:12px_12px]" />
+      <div className="absolute inset-0 opacity-[0.12] [background-image:linear-gradient(to_right,#fff_1px,transparent_1px),linear-gradient(to_bottom,#fff_1px,transparent_1px)] [background-size:12px_12px]" />
+      <div
+        className="absolute left-1/2 top-0 h-20 w-36 -translate-x-1/2 rounded-full bg-fuchsia-300/15 blur-2xl"
+        style={{ animation: "stage-glow 4s ease-in-out infinite" }}
+      />
 
-      {/* stage light */}
-      <div className="absolute left-1/2 top-0 h-24 w-40 -translate-x-1/2 rounded-full bg-fuchsia-300/20 blur-2xl" style={{ animation: "stage-glow 4s ease-in-out infinite" }} />
+      {/*
+        Sequential logo build. Each mark owns a dedicated slot on one shared
+        baseline, so the three stages can never collide. The connectors are
+        drawn with stroke-dashoffset, exactly like a real motion-design build,
+        and the whole sequence resolves into a single composed lockup.
+      */}
 
-      {/* orbiting guide */}
-      <span className="absolute left-1/2 top-[44px] h-16 w-16 -translate-x-1/2 -translate-y-1/2 rounded-full border border-dashed border-white/20" style={{ animation: "spin 14s linear infinite" }} />
-
-      {/* logo mark sequence */}
-      <div className="absolute left-1/2 top-[44px] h-10 w-10 -translate-x-1/2 -translate-y-1/2">
-        {/* mark A */}
-        <span
-          className="absolute inset-0 grid place-items-center rounded-[6px] bg-gradient-to-br from-white to-neutral-300 text-[13px] font-black text-neutral-900 shadow-[0_8px_18px_-8px_rgba(0,0,0,0.9)]"
-          style={{ animation: "logo-a 6s ease-in-out infinite" }}
-        >
-          A
-        </span>
-        {/* mark B */}
-        <span
-          className="absolute inset-0 grid place-items-center rounded-full border-2 border-fuchsia-200/80 bg-white/5 text-[12px] font-black text-fuchsia-100"
-          style={{ animation: "logo-b 6s ease-in-out infinite" }}
-        >
-          V
-        </span>
-        {/* final composite */}
-        <span
-          className="absolute inset-0 grid place-items-center bg-gradient-to-br from-white via-neutral-100 to-neutral-300 shadow-[0_10px_24px_-10px_rgba(255,255,255,0.5)]"
-          style={{
-            animation: "logo-final 6s ease-in-out infinite",
-            clipPath: "polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)",
-          }}
-        >
-          <span className="text-[11px] font-black tracking-tight text-neutral-950">GS</span>
-        </span>
+      {/* stage labels */}
+      <div className="absolute inset-x-3 top-2 flex items-center justify-between text-[5px] uppercase tracking-[0.18em] text-white/35">
+        <span>Mark</span>
+        <span>Link</span>
+        <span>Compose</span>
       </div>
 
-      {/* wordmark resolving underneath */}
-      <span
-        className="absolute left-1/2 top-[70px] -translate-x-1/2 whitespace-nowrap text-[7px] font-semibold uppercase tracking-[0.34em] text-white/90"
-        style={{ animation: "logo-final 6s ease-in-out infinite" }}
+      {/* connector A → B */}
+      <svg
+        className="pointer-events-none absolute inset-0 h-full w-full"
+        viewBox="0 0 100 100"
+        preserveAspectRatio="none"
+        aria-hidden="true"
       >
-        GurSimar
+        <line
+          x1="20"
+          y1="40"
+          x2="46"
+          y2="40"
+          pathLength={1}
+          strokeDasharray="1"
+          stroke="rgba(255,255,255,0.7)"
+          strokeWidth="1.4"
+          strokeLinecap="round"
+          vectorEffect="non-scaling-stroke"
+          style={anim("mg-draw-left 9s ease-in-out infinite")}
+        />
+        <line
+          x1="54"
+          y1="40"
+          x2="80"
+          y2="40"
+          pathLength={1}
+          strokeDasharray="1"
+          stroke="rgba(255,255,255,0.7)"
+          strokeWidth="1.4"
+          strokeLinecap="round"
+          vectorEffect="non-scaling-stroke"
+          style={anim("mg-draw-right 9s ease-in-out infinite")}
+        />
+      </svg>
+
+      {/* subtle baseline the marks sit on */}
+      <span className="pointer-events-none absolute inset-x-5 top-[40%] h-px bg-white/[0.07]" />
+
+      {/* stage 01 — a single graphic element */}
+      <span
+        className="mg-node absolute left-[16%] top-[40%] grid h-[26px] w-[26px] -translate-x-1/2 -translate-y-1/2 place-items-center rounded-[6px] bg-gradient-to-br from-white to-neutral-300 shadow-[0_8px_18px_-8px_rgba(0,0,0,0.95)]"
+        style={anim("mg-node-left 9s ease-in-out infinite")}
+      >
+        <span className="h-[9px] w-[9px] rounded-full bg-neutral-900" />
       </span>
 
-      {/* keyframe timeline */}
+      {/* stage 02 — second element, own slot */}
+      <span
+        className="mg-node absolute left-1/2 top-[40%] grid h-[26px] w-[26px] -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border-2 border-fuchsia-200/80 bg-white/5"
+        style={anim("mg-node-center 9s ease-in-out infinite")}
+      >
+        <span className="h-[8px] w-[8px] rounded-full bg-fuchsia-200/90" />
+      </span>
+
+      {/* stage 03 — third element, own slot */}
+      <span
+        className="mg-node absolute left-[84%] top-[40%] grid h-[26px] w-[26px] -translate-x-1/2 -translate-y-1/2 place-items-center"
+        style={anim("mg-node-right 9s ease-in-out infinite")}
+      >
+        <span className="h-[14px] w-[14px] rotate-45 rounded-[2px] border border-white/70 bg-white/15" />
+      </span>
+
+      {/* composed lockup — one final mark built from all three stages */}
+      {active && (
+        <>
+          <span
+            className="mg-halo pointer-events-none absolute left-1/2 top-[40%] h-[42px] w-[42px] rounded-full border border-fuchsia-200/30"
+            style={{ animation: "mg-halo 9s ease-in-out infinite" }}
+          />
+          <span
+            className="mg-final-mark absolute left-1/2 top-[40%] grid h-[32px] w-[32px] place-items-center bg-gradient-to-br from-white via-neutral-100 to-neutral-300 shadow-[0_10px_24px_-10px_rgba(255,255,255,0.55)]"
+            style={{
+              animation: "mg-final 9s ease-in-out infinite",
+              clipPath: "polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)",
+            }}
+          >
+            <span className="text-[10px] font-black tracking-tight text-neutral-950">GS</span>
+          </span>
+
+          {/* resolved wordmark */}
+          <span
+            className="mg-wordmark absolute left-1/2 top-[68%] whitespace-nowrap text-[7px] font-semibold uppercase tracking-[0.32em] text-white/90"
+            style={{ animation: "mg-wordmark 9s ease-in-out infinite" }}
+          >
+            Gursimar
+          </span>
+        </>
+      )}
+
+      {/* keyframe rail */}
       <div className="absolute inset-x-3 bottom-2 rounded-[2px] border border-white/10 bg-black/45 px-1.5 py-1 backdrop-blur">
         <div className="relative h-[6px]">
-          <span className="absolute inset-y-0 left-0 right-0 top-1/2 h-px bg-white/15" />
-          {[8, 30, 52, 74, 92].map((left, i) => (
+          <span className="absolute inset-x-0 top-1/2 h-px bg-white/15" />
+          {[10, 28, 46, 64, 82].map((left, i) => (
             <span
-              key={i}
+              key={left}
               className="absolute top-1/2 h-[5px] w-[5px] -translate-y-1/2 rotate-45 rounded-[1px] border border-fuchsia-200/70 bg-fuchsia-300/80"
               style={{ left: `${left}%`, animation: `fade 2.4s ease-in-out ${i * 0.2}s infinite` }}
             />
           ))}
           <span
             className="absolute -top-[1px] h-[8px] w-px bg-white/80"
-            style={{ animation: "sweep 3.4s linear infinite" }}
+            style={anim("mg-sweep 9s linear infinite")}
           />
         </div>
         <div className="mt-0.5 flex items-center justify-between text-[5px] uppercase tracking-[0.16em] text-white/35">
           <span>Logo build</span>
-          <span>00:00 — 00:06</span>
+          <span>00:00 — 00:09</span>
         </div>
       </div>
+
       <div className="absolute right-2 top-2 flex items-center gap-1 rounded-full border border-white/15 bg-white/5 px-1.5 py-0.5">
         <span className="h-1 w-1 rounded-full bg-fuchsia-300" style={{ animation: "pulse 1.6s ease-in-out infinite" }} />
         <span className="text-[5px] uppercase tracking-[0.16em] text-white/60">Motion</span>
       </div>
-      {active && <span className="sr-only">Logo morph animation sequence</span>}
+      {active && <span className="sr-only">Sequential logo build: three graphic elements link and compose into one mark</span>}
     </Frame>
   );
 }

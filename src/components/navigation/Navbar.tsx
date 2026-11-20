@@ -97,14 +97,18 @@ export function Navbar({ onHire }: { onHire: () => void }) {
           className="nav-cycle-dark pointer-events-none absolute -left-10 top-0 h-24 w-40 rounded-full bg-white/10 blur-3xl"
         />
 
-        <a href="#top" className="group relative flex shrink-0 items-center gap-2.5">
+        <a href="#top" className="group relative flex min-w-0 items-center gap-2 sm:gap-2.5">
           <span className="nav-chip-tone relative grid h-9 w-9 place-items-center overflow-hidden rounded-xl border text-[11px] font-semibold tracking-tight shadow-[inset_0_1px_0_rgba(255,255,255,0.25),0_6px_16px_-10px_rgba(0,0,0,0.9)] transition-transform duration-500 group-hover:-rotate-6">
             <span className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/25 to-transparent" />
             <span className="relative">GS</span>
           </span>
-          <span className="hidden flex-col leading-none sm:flex">
-            <span className="text-[12px] font-semibold tracking-[0.22em]">GurSimar Singh</span>
-            <span className="mt-1 text-[8px] uppercase tracking-[0.32em] opacity-45">Video · Design</span>
+          <span className="flex min-w-0 flex-col leading-none">
+            <span className="truncate whitespace-nowrap text-[10px] font-semibold tracking-[0.1em] min-[360px]:text-[11px] sm:text-[12px] sm:tracking-[0.22em]">
+              Gursimar Singh
+            </span>
+            <span className="mt-1 truncate whitespace-nowrap text-[7px] uppercase tracking-[0.16em] opacity-45 sm:text-[8px] sm:tracking-[0.32em]">
+              Video · Design
+            </span>
           </span>
         </a>
 

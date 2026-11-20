@@ -152,6 +152,146 @@ function PipelineMonitor({ play }: { play: boolean }) {
   );
 }
 
+/**
+ * Delivery tracking panel.
+ *
+ * Added beneath the closing statement. It follows the same monochrome
+ * language as the pipeline monitor above and never touches that animation:
+ * a courier carries the finished cut along a route while the delivery rail
+ * fills and the handoff resolves.
+ */
+function DeliveryPanel({ play }: { play: boolean }) {
+  return (
+    <div
+      className={cn(
+        "relative mt-6 overflow-hidden rounded-2xl border border-neutral-200 bg-white p-4 shadow-[0_22px_60px_-44px_rgba(0,0,0,0.55)] sm:p-6",
+        !play && "anim-paused"
+      )}
+    >
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-neutral-300 to-transparent" />
+
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2.5">
+          <span className="grid h-7 w-7 place-items-center rounded-lg border border-neutral-200 bg-neutral-50 text-[10px] font-semibold text-neutral-500">
+            05
+          </span>
+          <div>
+            <p className="text-[10px] uppercase tracking-[0.22em] text-neutral-400">Delivery</p>
+            <p className="text-[12px] font-semibold tracking-tight text-neutral-900">
+              Final master · 4K H.264
+            </p>
+          </div>
+        </div>
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-neutral-200 bg-white px-2.5 py-1 text-[9px] uppercase tracking-[0.18em] text-neutral-500">
+          <span className="relative flex h-1.5 w-1.5">
+            <span
+              className="absolute inset-0 rounded-full bg-emerald-400/60"
+              style={{ animation: "delivery-ping 2.4s ease-out infinite" }}
+            />
+            <span className="relative h-1.5 w-1.5 rounded-full bg-emerald-500" />
+          </span>
+          In transit
+        </span>
+      </div>
+
+      {/* tracking stage */}
+      <div className="relative mt-4 h-40 overflow-hidden rounded-xl border border-neutral-200/90 bg-gradient-to-b from-neutral-50 via-white to-neutral-100 sm:h-44">
+        <div className="pointer-events-none absolute inset-0 opacity-[0.5] [background-image:linear-gradient(to_right,#e9e9ea_1px,transparent_1px),linear-gradient(to_bottom,#e9e9ea_1px,transparent_1px)] [background-size:28px_28px]" />
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-14 bg-gradient-to-b from-white to-transparent" />
+
+        {/* message */}
+        <div className="relative flex items-center gap-2 px-4 pt-4">
+          <span className="h-px w-6 bg-neutral-900" />
+          <p className="text-[11px] font-medium tracking-tight text-neutral-800 sm:text-[13px]">
+            You&apos;re on the way to deliver your video.
+          </p>
+        </div>
+
+        {/* route markers */}
+        <div className="pointer-events-none absolute inset-x-6 top-[46%] flex items-center justify-between text-[8px] uppercase tracking-[0.2em] text-neutral-400">
+          <span>Studio</span>
+          <span>Upload</span>
+          <span>Client</span>
+        </div>
+        <div className="pointer-events-none absolute inset-x-6 top-[54%] h-px bg-[repeating-linear-gradient(to_right,#d4d4d4_0px,#d4d4d4_4px,transparent_4px,transparent_10px)]" />
+
+        {/* moving delivery unit */}
+        <div
+          className="absolute top-[52%] h-16 w-24 -translate-y-1/2"
+          style={{ animation: "delivery-ride 11s cubic-bezier(0.45,0.05,0.55,0.95) infinite" }}
+        >
+          <div className="relative h-full w-full" style={{ animation: "delivery-rider-bob 1.1s ease-in-out infinite" }}>
+            {/* speed streaks */}
+            <span className="absolute left-0 top-[38%] h-px w-5 bg-neutral-400/70" />
+            <span className="absolute left-1 top-[52%] h-px w-3 bg-neutral-400/50" />
+
+            <svg viewBox="0 0 96 64" className="absolute right-0 top-0 h-14 w-[84px]" aria-hidden="true">
+              {/* wheels */}
+              {[22, 66].map((cx) => (
+                <g key={cx}>
+                  <circle cx={cx} cy={49} r={8} fill="#ffffff" stroke="#171717" strokeWidth={2.2} />
+                  <g style={{ transformOrigin: `${cx}px 49px`, animation: "delivery-wheel 1.6s linear infinite" }}>
+                    <line x1={cx} y1={42.5} x2={cx} y2={55.5} stroke="#171717" strokeWidth={0.9} />
+                    <line x1={cx - 6.5} y1={49} x2={cx + 6.5} y2={49} stroke="#171717" strokeWidth={0.9} />
+                  </g>
+                </g>
+              ))}
+
+              {/* chassis */}
+              <path d="M22 49 L34 40 H50 L56 49" fill="none" stroke="#171717" strokeWidth={2.2} strokeLinejoin="round" />
+              <path d="M34 40 L38 30 H46" fill="none" stroke="#171717" strokeWidth={2} strokeLinecap="round" />
+
+              {/* courier */}
+              <circle cx={44} cy={16} r={4.4} fill="#171717" />
+              <path d="M44 20.5 L41 30 L47 33" fill="none" stroke="#171717" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M43 23 L52 27" fill="none" stroke="#171717" strokeWidth={2} strokeLinecap="round" />
+
+              {/* delivery package */}
+              <rect x={54} y={16} width={19} height={15} rx={2} fill="#171717" />
+              <text x={63.5} y={27} textAnchor="middle" fontSize={6} fontWeight={700} fill="#ffffff" fontFamily="ui-sans-serif, system-ui">4K</text>
+              <path d="M57 16 V31" stroke="#ffffff" strokeWidth={0.8} opacity={0.45} />
+            </svg>
+          </div>
+        </div>
+
+        {/* completed handoff marker */}
+        <span
+          className="absolute right-5 top-[38%] grid h-8 w-8 place-items-center rounded-full border border-emerald-500/40 bg-emerald-50 text-emerald-600"
+          style={{ animation: "delivery-done 11s ease-in-out infinite" }}
+        >
+          <Check className="h-3.5 w-3.5" />
+        </span>
+
+        {/* road */}
+        <div className="absolute inset-x-0 bottom-0 h-11 border-t border-neutral-200 bg-gradient-to-b from-neutral-100 to-neutral-200/80">
+          <div
+            className="absolute inset-x-0 top-1/2 h-[2px] bg-[repeating-linear-gradient(to_right,#a3a3a3_0px,#a3a3a3_10px,transparent_10px,transparent_22px)]"
+            style={{ animation: "delivery-road 0.9s linear infinite" }}
+          />
+        </div>
+      </div>
+
+      {/* delivery progress */}
+      <div className="mt-4">
+        <div className="flex items-center justify-between text-[9px] uppercase tracking-[0.18em] text-neutral-400">
+          <span>Delivery progress</span>
+          <span className="text-neutral-600">Render · Upload · Handoff</span>
+        </div>
+        <div className="relative mt-2 h-[5px] overflow-hidden rounded-full bg-neutral-200">
+          <span
+            className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-neutral-900 via-neutral-700 to-neutral-500"
+            style={{ animation: "delivery-fill 11s ease-in-out infinite" }}
+          />
+          <span
+            className="absolute top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-neutral-900 bg-white shadow"
+            style={{ animation: "delivery-knob 11s ease-in-out infinite" }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function WorkflowQuality() {
   const { ref, inView, visible } = useReveal<HTMLDivElement>();
 
@@ -371,6 +511,8 @@ export function WorkflowQuality() {
             </span>
           </div>
         </div>
+
+        <DeliveryPanel play={visible} />
       </div>
     </section>
   );

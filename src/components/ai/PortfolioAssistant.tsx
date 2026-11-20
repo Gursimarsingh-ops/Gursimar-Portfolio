@@ -377,14 +377,26 @@ export function PortfolioAssistant({ onHire }: { onHire: () => void }) {
             <span className="pointer-events-none absolute -left-12 -top-16 h-44 w-44 rounded-full bg-sky-300/10 blur-3xl" />
             <span className="pointer-events-none absolute inset-0 opacity-[0.045] [background-image:radial-gradient(rgba(255,255,255,0.9)_0.5px,transparent_0.5px)] [background-size:3px_3px]" />
 
-            <header className="relative flex items-center justify-between gap-3 border-b border-white/10 bg-white/[0.02] px-4 py-3.5">
-              <div className="flex items-center gap-3">
-                <span className="relative grid h-10 w-10 place-items-center rounded-xl border border-white/18 bg-gradient-to-b from-white/18 to-white/[0.04] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.22)]">
-                  <Bot className="h-4 w-4" />
+            <header className="relative flex items-center justify-between gap-3 border-b border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.055),rgba(255,255,255,0.012))] px-4 py-3.5">
+              <div className="flex min-w-0 items-center gap-3">
+                <span className="relative grid h-11 w-11 shrink-0 place-items-center">
+                  <span
+                    className="absolute inset-0 rounded-full border border-transparent border-r-white/20 border-t-white/50"
+                    style={{ animation: "assistant-halo 7s linear infinite" }}
+                  />
+                  <span className="absolute inset-[3px] rounded-full bg-[conic-gradient(from_120deg,rgba(255,255,255,0.16),rgba(255,255,255,0.02),rgba(255,255,255,0.14))]" />
+                  <span className="relative grid h-8 w-8 place-items-center rounded-full border border-white/20 bg-gradient-to-b from-white/20 to-white/[0.03] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.3)]">
+                    <Bot className="h-4 w-4" />
+                  </span>
                 </span>
-                <div>
-                  <p className="text-[13px] font-semibold tracking-tight text-white">{assistantName}</p>
-                  <p className="mt-0.5 flex items-center gap-1.5 text-[9px] uppercase tracking-[0.16em] text-white/55">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <p className="truncate text-[13px] font-semibold tracking-tight text-white">{assistantName}</p>
+                    <span className="shrink-0 rounded-full border border-white/15 bg-white/[0.06] px-1.5 py-[1px] text-[7px] font-semibold uppercase tracking-[0.14em] text-white/55">
+                      AI
+                    </span>
+                  </div>
+                  <p className="mt-1 flex items-center gap-1.5 text-[9px] uppercase tracking-[0.16em] text-white/55">
                     <span
                       className={cn("h-1.5 w-1.5 rounded-full", !available && "bg-amber-400")}
                       style={available ? { background: accent, animation: "pulse 2.4s ease-in-out infinite" } : undefined}
@@ -460,12 +472,19 @@ export function PortfolioAssistant({ onHire }: { onHire: () => void }) {
                 >
                   <div
                     className={cn(
-                      "max-w-[87%] rounded-2xl px-3.5 py-2.5 text-[12.5px] leading-relaxed shadow-[0_12px_28px_-20px_rgba(0,0,0,1)]",
+                      "relative max-w-[88%] rounded-[18px] px-4 py-3 text-[12.5px] leading-relaxed transition-colors duration-300",
                       message.role === "user"
-                        ? "rounded-br-md bg-white text-neutral-900"
-                        : "rounded-bl-md border border-white/14 bg-white/[0.09] text-white"
+                        ? "rounded-br-[6px] bg-gradient-to-b from-white to-neutral-100 text-neutral-900 shadow-[0_16px_32px_-24px_rgba(0,0,0,1)]"
+                        : "rounded-bl-[6px] border border-white/12 bg-[linear-gradient(180deg,rgba(255,255,255,0.10),rgba(255,255,255,0.05))] text-white/95 shadow-[0_20px_40px_-30px_rgba(0,0,0,1)]"
                     )}
                   >
+                    {message.role === "assistant" && (
+                      <span
+                        aria-hidden="true"
+                        className="pointer-events-none absolute inset-y-3 left-0 w-[2px] rounded-full opacity-80"
+                        style={{ background: accent }}
+                      />
+                    )}
                     {message.role === "assistant" ? (
                       <Markdown text={message.text} />
                     ) : (
@@ -521,18 +540,18 @@ export function PortfolioAssistant({ onHire }: { onHire: () => void }) {
 
               {busy && (
                 <div className="flex justify-start">
-                  <span className="flex items-center gap-2.5 rounded-2xl rounded-bl-md border border-white/14 bg-white/[0.09] px-3.5 py-2.5">
+                  <span className="flex items-center gap-2.5 rounded-[18px] rounded-bl-[6px] border border-white/12 bg-white/[0.06] px-4 py-3">
                     <span className="flex items-center gap-1">
                       {[0, 1, 2].map((index) => (
                         <span
                           key={index}
-                          className="h-1.5 w-1.5 rounded-full bg-sky-200"
-                          style={{ animation: `pulse 1.2s ease-in-out ${index * 0.16}s infinite` }}
+                          className="h-1.5 w-1.5 rounded-full bg-white/80"
+                          style={{ animation: `typing-dot 1.15s ease-in-out ${index * 0.14}s infinite` }}
                         />
                       ))}
                     </span>
-                    <span className="text-[9px] uppercase tracking-[0.16em] text-white/60">
-                      {progress !== null && progress < 100 ? `Uploading ${progress}%` : "Thinking"}
+                    <span className="text-[9px] uppercase tracking-[0.16em] text-white/55">
+                      {progress !== null && progress < 100 ? `Uploading ${progress}%` : "Composing reply"}
                     </span>
                   </span>
                 </div>
@@ -614,7 +633,7 @@ export function PortfolioAssistant({ onHire }: { onHire: () => void }) {
               }}
               className="relative border-t border-white/10 bg-black/20 px-3 py-3"
             >
-              <div className="flex items-end gap-2">
+              <div className="flex items-end gap-1.5 rounded-2xl border border-white/12 bg-black/35 p-1.5 transition-colors duration-300 focus-within:border-white/30 focus-within:bg-black/45">
                 <input
                   ref={inputRef}
                   type="file"
@@ -629,7 +648,8 @@ export function PortfolioAssistant({ onHire }: { onHire: () => void }) {
                   onClick={() => inputRef.current?.click()}
                   disabled={!available || busy}
                   aria-label="Attach files"
-                  className="grid h-[44px] w-[44px] shrink-0 place-items-center rounded-xl border border-white/18 bg-white/[0.06] text-white/70 transition-all hover:border-white/40 hover:bg-white/[0.12] hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                  title="Attach images, video, PDF or docs"
+                  className="grid h-[38px] w-[38px] shrink-0 place-items-center rounded-xl text-white/55 transition-all duration-300 hover:bg-white/[0.08] hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   <Paperclip className="h-4 w-4" />
                 </button>
@@ -645,19 +665,19 @@ export function PortfolioAssistant({ onHire }: { onHire: () => void }) {
                   rows={1}
                   placeholder={available ? placeholder : "Assistant unavailable"}
                   disabled={!available || busy}
-                  className="max-h-28 min-h-[44px] flex-1 resize-none rounded-xl border border-white/18 bg-black/50 px-3.5 py-2.5 text-[12px] text-white outline-none transition-colors placeholder:text-white/35 focus:border-sky-300/60 focus:bg-black/70 disabled:cursor-not-allowed disabled:opacity-55"
+                  className="max-h-28 min-h-[38px] flex-1 resize-none border-0 bg-transparent px-1.5 py-2 text-[12px] leading-relaxed text-white outline-none placeholder:text-white/35 disabled:cursor-not-allowed disabled:opacity-55"
                 />
                 <button
                   type="submit"
                   disabled={!available || busy || !draft.trim()}
                   aria-label="Send message"
-                  className="grid h-[44px] w-[44px] shrink-0 place-items-center rounded-xl bg-white text-neutral-950 transition-all hover:-translate-y-0.5 hover:bg-neutral-200 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="grid h-[38px] w-[38px] shrink-0 place-items-center rounded-xl bg-white text-neutral-950 shadow-[0_10px_24px_-16px_rgba(255,255,255,0.8)] transition-all duration-300 hover:-translate-y-0.5 hover:bg-neutral-200 active:translate-y-0 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0"
                 >
                   {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                 </button>
               </div>
-              <div className="mt-2 flex items-center justify-between gap-2">
-                <p className="text-[8px] uppercase tracking-[0.14em] text-white/40">
+              <div className="mt-2.5 flex items-center justify-between gap-2 px-0.5">
+                <p className="text-[8px] uppercase tracking-[0.14em] text-white/35">
                   Images, video, PDF &amp; docs · max 5 files
                 </p>
                 <button
