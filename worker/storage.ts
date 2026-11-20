@@ -190,8 +190,13 @@ async function b2Fetch(config: B2Config, options: RequestOptions): Promise<Respo
     "x-amz-date": amzDate,
   };
 
+  // `Range` is sent but deliberately left out of SignedHeaders: Cloudflare can
+  // drop it from the outgoing subrequest, and Backblaze then rejects the whole
+  // call with "header 'range' is listed in signed headers, but is not present".
+  // SigV4 allows headers that are not signed.
   const signedNames = Object.keys(allHeaders)
     .map((name) => name.toLowerCase())
+    .filter((name) => name !== "range")
     .sort();
   const canonicalHeaders = signedNames
     .map((name) => {
@@ -302,37 +307,30 @@ function xmlEscape(value: string): string {
 /* ---------------------------------- reads --------------------------------- */
 
 /**
- * Object metadata, read with a 1-byte ranged GET instead of HEAD.
+ * Object metadata, read from a plain GET response.
  *
- * Backblaze's S3-compatible layer answers HEAD on objects in a
- * bucket-restricted application key with 403 Forbidden while the very same key
- * is allowed to PUT, GET, LIST and DELETE those objects — a real upload was
- * written and streamed publicly, yet its HEAD probe was denied. A HEAD reply
- * carries no body, so B2's error code is invisible, which made the rejection
- * look like bad credentials. A ranged GET returns the same headers (content
- * type, ETag, x-amz-meta-*), the real size via Content-Range, and B2's XML
- * error code when something genuinely fails.
+ * Two Backblaze S3-compatible behaviours made HEAD unusable here, and both hid
+ * themselves behind an empty response body:
+ *
+ * - HEAD on an object returns 403 Forbidden for a bucket-restricted
+ *   application key, even though the same key may PUT, GET, LIST and DELETE the
+ *   object (a real upload was written and streamed publicly while its HEAD
+ *   probe was denied). That was misreported as a bad application key.
+ * - Signing a `Range` header (the obvious way to make a metadata-only GET
+ *   cheap) is rejected by B2 with `InvalidRequest: header 'range' is listed in
+ *   signed headers, but is not present` on a freshly written object.
+ *
+ * A plain GET is the one read that works immediately and every time, so
+ * metadata comes from its headers (Content-Type, ETag, Content-Length,
+ * x-amz-meta-*) and the body is cancelled straight away — nothing is buffered.
  */
 export async function headObject(env: StorageEnv, key: string): Promise<StoredObject | null> {
   const config = b2Config(env);
   if (!config) return null;
 
-  const response = await b2Fetch(config, { method: "GET", key, headers: { range: "bytes=0-0" } });
-  if (response.status === 416) {
-    // An empty object cannot satisfy a range, but it does exist.
-    if (response.body) await response.body.cancel().catch(() => undefined);
-    return {
-      size: 0,
-      contentType: response.headers.get("content-type"),
-      sha256: response.headers.get("x-amz-meta-sha256"),
-      originalName: response.headers.get("x-amz-meta-original-name"),
-      etag: response.headers.get("etag"),
-    };
-  }
+  const response = await b2Fetch(config, { method: "GET", key });
   if (response.ok || response.status === 206) {
-    const range = response.headers.get("content-range") ?? "";
-    const total = range.match(/\/(\d+)\s*$/)?.[1];
-    const length = Number(total ?? response.headers.get("content-length") ?? "0");
+    const length = Number(response.headers.get("content-length") ?? "0");
     // Never buffer the object: only its headers are needed here.
     if (response.body) await response.body.cancel().catch(() => undefined);
     return {
