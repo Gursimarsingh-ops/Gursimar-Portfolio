@@ -5,6 +5,7 @@ import {
   AI_DEFAULT_MODEL,
   AI_DEFAULT_PROVIDER,
   AI_GUARDRAILS,
+  AI_MODEL_PRESETS,
   AI_VISION_MODEL_HINT,
   PORTFOLIO_KNOWLEDGE,
 } from "./knowledge";
@@ -213,10 +214,32 @@ function readErrorLog(value: unknown): AiErrorLog[] {
     .slice(0, 15);
 }
 
+interface AiModelTest {
+  at: string;
+  ok: boolean;
+  status: number | null;
+  latencyMs: number;
+  message: string;
+}
+
+/** A model id registered by the administrator. `verifiedAt` is only set by a real success. */
+interface AiModelEntry {
+  id: string;
+  label: string;
+  verifiedAt: string | null;
+  lastTest: AiModelTest | null;
+}
+
 interface AiSettings {
   enabled: boolean;
   model: string;
   provider: string;
+  /** Model ids the dashboard offers; the active model is always one of these. */
+  models: AiModelEntry[];
+  /** Preferred model when the dashboard is reset. */
+  defaultModel: string;
+  /** Sent as top_p only when the administrator sets it (null = provider default). */
+  topP: number | null;
   /** Chat presentation and behavior (public, editable in the dashboard). */
   assistantName: string;
   welcomeMessage: string;
@@ -242,6 +265,53 @@ interface AiSettings {
   lastLatencyMs: number | null;
 }
 
+const MODEL_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:/~-]{1,119}$/;
+
+function readModelTest(value: unknown): AiModelTest | null {
+  if (!value || typeof value !== "object") return null;
+  const input = value as Record<string, unknown>;
+  if (typeof input.message !== "string") return null;
+  return {
+    at: typeof input.at === "string" ? input.at : "",
+    ok: input.ok === true,
+    status: typeof input.status === "number" ? input.status : null,
+    latencyMs: Math.max(0, Math.round(clampNumber(input.latencyMs, 0, 600000, 0))),
+    message: input.message.slice(0, 300),
+  };
+}
+
+function readModels(value: unknown, activeModel: string): AiModelEntry[] {
+  const source = Array.isArray(value) ? value : [];
+  const entries: AiModelEntry[] = [];
+  for (const item of source) {
+    if (!item || typeof item !== "object") continue;
+    const record = item as Record<string, unknown>;
+    const id = typeof record.id === "string" ? record.id.trim().slice(0, 120) : "";
+    if (!MODEL_ID_RE.test(id)) continue;
+    if (entries.some((entry) => entry.id === id)) continue;
+    entries.push({
+      id,
+      label:
+        typeof record.label === "string" && record.label.trim()
+          ? record.label.trim().slice(0, 60)
+          : id.split("/").pop() ?? id,
+      verifiedAt: typeof record.verifiedAt === "string" ? record.verifiedAt : null,
+      lastTest: readModelTest(record.lastTest),
+    });
+    if (entries.length >= 30) break;
+  }
+  // The active model must be selectable even if the stored list was trimmed.
+  if (activeModel && MODEL_ID_RE.test(activeModel) && !entries.some((entry) => entry.id === activeModel)) {
+    entries.push({
+      id: activeModel,
+      label: activeModel.split("/").pop() ?? activeModel,
+      verifiedAt: null,
+      lastTest: null,
+    });
+  }
+  return entries;
+}
+
 async function readAiSettings(env: PortalEnv): Promise<AiSettings> {
   const row = await readSetting(env, SETTING_AI);
   let parsed: Record<string, unknown> = {};
@@ -256,9 +326,19 @@ async function readAiSettings(env: PortalEnv): Promise<AiSettings> {
   // Legacy placeholder values are ignored so the NIM defaults apply.
   const storedModel = typeof parsed.model === "string" ? parsed.model : "";
   const storedProvider = typeof parsed.provider === "string" ? parsed.provider : "";
+  const model = LEGACY_AI_MODELS.has(storedModel) ? "" : storedModel;
+  const defaultModel = LEGACY_AI_MODELS.has(typeof parsed.defaultModel === "string" ? parsed.defaultModel : "")
+    ? AI_DEFAULT_MODEL
+    : (typeof parsed.defaultModel === "string" && parsed.defaultModel.trim()) || AI_DEFAULT_MODEL;
   return {
     enabled: parsed.enabled !== false,
-    model: LEGACY_AI_MODELS.has(storedModel) ? "" : storedModel,
+    model,
+    models: readModels(parsed.models, model || defaultModel),
+    defaultModel,
+    topP:
+      parsed.topP === null || parsed.topP === undefined
+        ? null
+        : Math.round(clampNumber(parsed.topP, 0.01, 1, 1) * 100) / 100,
     provider:
       storedProvider && storedProvider !== "openai-compatible"
         ? storedProvider
@@ -308,7 +388,12 @@ function aiApiUrl(env: PortalEnv, settings: AiSettings): string {
 
 function aiModel(env: PortalEnv, settings: AiSettings): string {
   const envModel = (env.AI_MODEL ?? "").trim();
-  return settings.model.trim() || (envModel && !LEGACY_AI_MODELS.has(envModel) ? envModel : "") || AI_DEFAULT_MODEL;
+  return (
+    settings.model.trim() ||
+    (envModel && !LEGACY_AI_MODELS.has(envModel) ? envModel : "") ||
+    settings.defaultModel.trim() ||
+    AI_DEFAULT_MODEL
+  );
 }
 
 function modelSupportsVision(model: string): boolean {
@@ -320,6 +405,9 @@ async function writeAiSettings(env: PortalEnv, settings: AiSettings): Promise<vo
     enabled: settings.enabled,
     model: settings.model,
     provider: settings.provider,
+    models: settings.models,
+    defaultModel: settings.defaultModel,
+    topP: settings.topP,
     apiUrl: settings.apiUrl,
     apiKey: settings.apiKey,
     knowledge: settings.knowledge,
@@ -350,6 +438,9 @@ function describeAi(env: PortalEnv, settings: AiSettings) {
       enabled: settings.enabled,
       model,
       provider: settings.provider || AI_DEFAULT_PROVIDER,
+      models: settings.models,
+      defaultModel: settings.defaultModel,
+      topP: settings.topP,
       apiUrl: aiApiUrl(env, settings),
       knowledge: settings.knowledge,
       assistantName: settings.assistantName,
@@ -373,12 +464,27 @@ function describeAi(env: PortalEnv, settings: AiSettings) {
     keySource: settings.apiKey ? "dashboard" : key ? "environment" : "none",
     model,
     vision: modelSupportsVision(model),
-    defaultModel: AI_DEFAULT_MODEL,
+    defaultModel: settings.defaultModel || AI_DEFAULT_MODEL,
     defaultApiUrl: AI_DEFAULT_API_URL,
     defaultProvider: AI_DEFAULT_PROVIDER,
+    catalog: AI_MODEL_PRESETS,
     envModel: env.AI_MODEL ?? null,
     providerEnv: env.AI_PROVIDER ?? null,
   };
+}
+
+/** HTTPS anywhere; plain HTTP only for a loopback development endpoint. */
+function validAiEndpoint(value: string): boolean {
+  if (/^https:\/\/[^\s]+$/i.test(value)) return true;
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === "http:" &&
+      (url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "[::1]")
+    );
+  } catch {
+    return false;
+  }
 }
 
 function providerErrorDetail(raw: string): string {
@@ -826,15 +932,104 @@ function attachmentsFor(row: AiMessageRow): AiHistoryMessage["attachments"] {
   }
 }
 
+type AiFailureCategory =
+  | "rate_limit"
+  | "quota"
+  | "credits"
+  | "auth"
+  | "model_unavailable"
+  | "overload"
+  | "invalid_request"
+  | "timeout"
+  | "network"
+  | "unknown";
+
+interface AiFailure {
+  category: AiFailureCategory;
+  retryable: boolean;
+  /** Safe to show a public visitor (no provider payload, no key). */
+  publicMessage: string;
+  retryAfterMs: number | null;
+}
+
+function retryAfterMs(value: string | null): number | null {
+  if (!value) return null;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds * 1000, 30_000);
+  const date = Date.parse(value);
+  if (Number.isFinite(date)) return Math.min(Math.max(date - Date.now(), 0), 30_000);
+  return null;
+}
+
+/**
+ * Turns a provider response into a category. HTTP 429 is not assumed to mean a
+ * bad key: the body is inspected so an exhausted account quota is reported as
+ * such and is never retried, while a transient rate limit is retried with
+ * backoff.
+ */
+function classifyFailure(status: number, detail: string, retryAfter: string | null): AiFailure {
+  const lower = detail.toLowerCase();
+  const after = retryAfterMs(retryAfter);
+  const category = ((): AiFailureCategory => {
+    if (status === 401 || status === 403) return "auth";
+    if (status === 402) return "credits";
+    if (status === 404) return "model_unavailable";
+    if (status === 408) return "timeout";
+    if (status === 429) {
+      if (/(quota|credit|billing|insufficient|exhaust|payment)/.test(lower)) {
+        return /(credit|billing|insufficient|payment)/.test(lower) ? "credits" : "quota";
+      }
+      if (/(rate|too many|per minute|per second|requests per|tokens per|limit exceeded|throttl)/.test(lower)) {
+        return "rate_limit";
+      }
+      return "rate_limit";
+    }
+    if (status === 400 || status === 422) return "invalid_request";
+    if (status >= 500) return "overload";
+    return "unknown";
+  })();
+
+  const publicMessage: Record<AiFailureCategory, string> = {
+    rate_limit:
+      "The assistant is receiving requests too quickly right now. Please try again in a moment.",
+    quota:
+      "The assistant has reached its provider usage limit for now. Please try again later, or use the Hire Me form.",
+    credits:
+      "The assistant provider account needs attention (usage credits or billing). Please use the Hire Me form or direct chat for now.",
+    auth:
+      "The assistant's provider rejected its stored credentials. The administrator needs to update the API key.",
+    model_unavailable:
+      "The selected assistant model is not available on the provider right now. Please use the Hire Me form or direct chat.",
+    overload:
+      "The AI provider is temporarily unavailable. Please try again shortly, or use the Hire Me form.",
+    invalid_request:
+      "The assistant could not process that request. Please rephrase it or use the Hire Me form.",
+    timeout:
+      "The AI provider took too long to respond. Please try again, or use the Hire Me form.",
+    network:
+      "The assistant is temporarily unreachable. Please try again shortly, or use the Hire Me form.",
+    unknown:
+      "The AI assistant is temporarily unavailable. Please try again shortly, or use the Hire Me form.",
+  };
+
+  const retryable = category === "rate_limit" || category === "overload" || category === "timeout" || category === "network";
+  return { category, retryable, publicMessage: publicMessage[category], retryAfterMs: after };
+}
+
 class AiProviderError extends Error {
   status: number;
   detail: string;
+  category: AiFailureCategory;
+  retryAfterMs: number | null;
 
-  constructor(status: number, detail: string) {
+  constructor(status: number, detail: string, failure?: AiFailure) {
     super(`provider_${status}`);
     this.name = "AiProviderError";
     this.status = status;
     this.detail = detail;
+    const resolved = failure ?? classifyFailure(status, detail, null);
+    this.category = resolved.category;
+    this.retryAfterMs = resolved.retryAfterMs;
   }
 }
 
@@ -884,44 +1079,83 @@ async function generateReply(
     messages.push({ role: "user", content: userText });
   }
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), settings.timeoutMs);
-  try {
-    const response = await fetch(apiUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model,
-        messages,
-        temperature: settings.temperature,
-        max_tokens: settings.maxTokens,
-      }),
-      signal: controller.signal,
-    });
+  // Bounded retries: only transient failures are retried, with exponential
+  // backoff plus jitter (and Retry-After when the provider sends it). An
+  // exhausted quota, a bad key or a missing model fails immediately.
+  const MAX_ATTEMPTS = 3;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), settings.timeoutMs);
+    try {
+      const response = await fetch(apiUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages,
+          temperature: settings.temperature,
+          max_tokens: settings.maxTokens,
+          ...(settings.topP !== null ? { top_p: settings.topP } : {}),
+          stream: false,
+        }),
+        signal: controller.signal,
+      });
 
-    if (!response.ok) {
-      const raw = await response.text();
-      throw new AiProviderError(response.status, providerErrorDetail(raw));
-    }
+      if (!response.ok) {
+        const raw = await response.text();
+        const detail = providerErrorDetail(raw);
+        throw new AiProviderError(
+          response.status,
+          detail,
+          classifyFailure(response.status, detail, response.headers.get("retry-after"))
+        );
+      }
 
-    const data = (await response.json()) as { choices?: { message?: { content?: unknown } }[] };
-    const content = data.choices?.[0]?.message?.content;
-    const text =
-      typeof content === "string"
-        ? content
-        : Array.isArray(content)
+      const data = (await response.json()) as { choices?: { message?: { content?: unknown } }[] };
+      const content = data.choices?.[0]?.message?.content;
+      const text =
+        typeof content === "string"
           ? content
-              .map((part) => (part && typeof part === "object" && "text" in part ? String((part as { text: unknown }).text) : ""))
-              .join("")
-          : "";
-    if (!text.trim()) throw new Error("empty_reply");
-    return text.trim().slice(0, 4000);
-  } finally {
-    clearTimeout(timer);
+          : Array.isArray(content)
+            ? content
+                .map((part) => (part && typeof part === "object" && "text" in part ? String((part as { text: unknown }).text) : ""))
+                .join("")
+            : "";
+      if (!text.trim()) throw new Error("empty_reply");
+      return text.trim().slice(0, 4000);
+    } catch (error) {
+      const failure =
+        error instanceof AiProviderError
+          ? error
+          : error instanceof Error && error.name === "AbortError"
+            ? new AiProviderError(408, "timeout", classifyFailure(408, "timeout", null))
+            : error instanceof Error && error.message === "empty_reply"
+              ? error
+              : new AiProviderError(
+                  0,
+                  error instanceof Error ? error.message.slice(0, 200) : "network error",
+                  classifyFailure(0, "network", null)
+                );
+
+      const retryable =
+        failure instanceof AiProviderError
+          ? classifyFailure(failure.status || 503, failure.detail, null).retryable
+          : false;
+      if (!retryable || attempt === MAX_ATTEMPTS) throw failure;
+
+      const base = Math.min(600 * 2 ** (attempt - 1), 4000);
+      const jitter = Math.round(Math.random() * 250);
+      const wait = Math.min(failure instanceof AiProviderError && failure.retryAfterMs !== null ? failure.retryAfterMs : base, 8000) + jitter;
+      await new Promise((resolve) => setTimeout(resolve, wait));
+    } finally {
+      clearTimeout(timer);
+    }
   }
+
+  throw new AiProviderError(503, "retries exhausted", classifyFailure(503, "retries exhausted", null));
 }
 
 async function aiChat(request: Request, env: PortalEnv): Promise<Response> {
@@ -1082,11 +1316,22 @@ async function aiChat(request: Request, env: PortalEnv): Promise<Response> {
       errors: [{ at: nowIso(), message: detail.slice(0, 400) }, ...settings.errors].slice(0, 15),
     }).catch(() => undefined);
     console.error("AI request failed", detail);
+    if (error instanceof AiProviderError) {
+      const failure = classifyFailure(error.status || 503, error.detail, null);
+      // Provider payloads never reach the browser; only a category-safe message.
+      const headers: HeadersInit =
+        failure.retryAfterMs !== null ? { "Retry-After": String(Math.ceil(failure.retryAfterMs / 1000)) } : {};
+      return json(
+        { error: failure.publicMessage, category: failure.category, retryable: failure.retryable },
+        failure.category === "rate_limit" || failure.category === "quota" || failure.category === "credits"
+          ? 429
+          : 503,
+        headers
+      );
+    }
     return fail(
-      error instanceof AiProviderError
-        ? `The AI provider rejected the request (HTTP ${error.status}). Check the API key, model and endpoint in the AI configuration panel.`
-        : "The AI assistant is temporarily unavailable. Please try again shortly, or use the Hire Me form or direct chat.",
-      502
+      "The AI assistant is temporarily unavailable. Please try again shortly, or use the Hire Me form or direct chat.",
+      503
     );
   }
 
@@ -1487,6 +1732,9 @@ async function adminAiSettings(request: Request, env: PortalEnv): Promise<Respon
   const body = await readJson<{
     enabled?: unknown;
     model?: unknown;
+    models?: unknown;
+    defaultModel?: unknown;
+    topP?: unknown;
     provider?: unknown;
     apiUrl?: unknown;
     apiKey?: unknown;
@@ -1508,8 +1756,8 @@ async function adminAiSettings(request: Request, env: PortalEnv): Promise<Respon
   let apiUrl = current.apiUrl;
   if (body.apiUrl !== undefined) {
     apiUrl = cleanText(body.apiUrl, 300);
-    if (apiUrl && !/^https:\/\/[^\s]+$/i.test(apiUrl)) {
-      return fail("The API endpoint must be a valid https:// URL.");
+    if (apiUrl && !validAiEndpoint(apiUrl)) {
+      return fail("The API endpoint must be a valid https:// URL (http:// is only accepted for localhost development).");
     }
   }
 
@@ -1527,9 +1775,34 @@ async function adminAiSettings(request: Request, env: PortalEnv): Promise<Respon
     knowledge = body.knowledge.slice(0, 12000);
   }
 
+  const requestedModel = body.model !== undefined ? cleanText(body.model, 120) : current.model;
+  if (body.model !== undefined && requestedModel && !MODEL_ID_RE.test(requestedModel)) {
+    return fail("Model id may only contain letters, numbers, dots, dashes, underscores, colons, slashes and tildes.");
+  }
+  const requestedDefault = body.defaultModel !== undefined ? cleanText(body.defaultModel, 120) : current.defaultModel;
+  if (requestedDefault && !MODEL_ID_RE.test(requestedDefault)) {
+    return fail("Default model id is not valid.");
+  }
+
+  let models = body.models !== undefined ? readModels(body.models, requestedModel) : current.models;
+  for (const id of [requestedModel, requestedDefault]) {
+    if (id && !models.some((entry) => entry.id === id)) {
+      models = [...models, { id, label: id.split("/").pop() ?? id, verifiedAt: null, lastTest: null }];
+    }
+  }
+  if (models.length > 30) models = models.slice(0, 30);
+
   const next: AiSettings = {
     enabled: typeof body.enabled === "boolean" ? body.enabled : current.enabled,
-    model: body.model !== undefined ? cleanText(body.model, 120) : current.model,
+    model: requestedModel,
+    models,
+    defaultModel: requestedDefault || AI_DEFAULT_MODEL,
+    topP:
+      body.topP === null
+        ? null
+        : body.topP !== undefined
+          ? Math.round(clampNumber(body.topP, 0.01, 1, 1) * 100) / 100
+          : current.topP,
     provider: cleanText(body.provider, 40) || current.provider || AI_DEFAULT_PROVIDER,
     apiUrl,
     apiKey,
@@ -1593,8 +1866,8 @@ async function adminAiTest(request: Request, env: PortalEnv): Promise<Response> 
   const url = postedUrl || aiApiUrl(env, current);
   const model = (typeof body?.model === "string" ? body.model.trim() : "") || aiModel(env, current);
 
-  if (!/^https:\/\/[^\s]+$/i.test(url)) {
-    return fail("The API endpoint must be a valid https:// URL.");
+  if (!validAiEndpoint(url)) {
+    return fail("The API endpoint must be a valid https:// URL (http:// is only accepted for localhost development).");
   }
   if (!key) {
     return json({
@@ -1630,14 +1903,18 @@ async function adminAiTest(request: Request, env: PortalEnv): Promise<Response> 
 
     if (!response.ok) {
       const detail = providerErrorDetail(raw);
+      const failure = classifyFailure(response.status, detail, response.headers.get("retry-after"));
       const saved = await readAiSettings(env);
-      const logMessage = `Test failed · HTTP ${response.status}: ${detail}`.slice(0, 400);
+      const testedAt = nowIso();
+      const logMessage = `Test failed · HTTP ${response.status} (${failure.category}): ${detail}`.slice(0, 400);
+      const test = { at: testedAt, ok: false, status: response.status, latencyMs, message: logMessage.slice(0, 300) };
       await writeAiSettings(env, {
         ...saved,
-        lastTestAt: nowIso(),
+        models: saved.models.map((entry) => (entry.id === model ? { ...entry, lastTest: test } : entry)),
+        lastTestAt: testedAt,
         lastError: logMessage,
         failedRequests: saved.failedRequests + 1,
-        errors: [{ at: nowIso(), message: logMessage }, ...saved.errors].slice(0, 15),
+        errors: [{ at: testedAt, message: logMessage }, ...saved.errors].slice(0, 15),
       }).catch(() => undefined);
       return json({
         ok: false,
@@ -1646,6 +1923,10 @@ async function adminAiTest(request: Request, env: PortalEnv): Promise<Response> 
         endpoint: url,
         model,
         message: `The provider rejected the request (HTTP ${response.status}).`,
+        category: failure.category,
+        retryable: failure.retryable,
+        retryAfterMs: failure.retryAfterMs,
+        publicMessage: failure.publicMessage,
         diagnostics: detail,
       });
     }
@@ -1673,8 +1954,18 @@ async function adminAiTest(request: Request, env: PortalEnv): Promise<Response> 
 
     const ts = nowIso();
     const saved = await readAiSettings(env);
+    const test = {
+      at: ts,
+      ok: true,
+      status: response.status,
+      latencyMs,
+      message: `Verified with a real completion in ${latencyMs} ms.`,
+    };
     await writeAiSettings(env, {
       ...saved,
+      models: saved.models.map((entry) =>
+        entry.id === model ? { ...entry, verifiedAt: ts, lastTest: test } : entry
+      ),
       lastTestAt: ts,
       lastSuccessAt: ts,
       lastError: null,
@@ -1770,8 +2061,9 @@ async function adminAiChatTest(request: Request, env: PortalEnv): Promise<Respon
       model,
       message:
         error instanceof AiProviderError
-          ? "The provider rejected the test message. Check the key, model and endpoint below."
+          ? `${classifyFailure(error.status || 503, error.detail, null).publicMessage} (HTTP ${error.status})`
           : "The model did not return a reply.",
+      category: error instanceof AiProviderError ? error.category : "unknown",
       diagnostics: detail,
     });
   }

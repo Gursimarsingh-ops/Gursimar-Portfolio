@@ -19,6 +19,9 @@ CREATE TABLE IF NOT EXISTS projects (
   duration_seconds REAL,
   source_url TEXT,
   thumb_style TEXT,
+  tags TEXT,
+  video_style TEXT,
+  resolution TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );

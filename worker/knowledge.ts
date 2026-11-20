@@ -86,6 +86,18 @@ export const AI_DEFAULT_API_URL = "https://integrate.api.nvidia.com/v1/chat/comp
 /** Configured NVIDIA NIM model (editable in the dashboard). */
 export const AI_DEFAULT_MODEL = "minimaxai/minimax-m3.1-flash";
 
+/**
+ * Suggested NIM chat models. They are only suggestions: an administrator can add
+ * any model id and every entry stays unverified until a real request succeeds.
+ */
+export const AI_MODEL_PRESETS: { id: string; label: string }[] = [
+  { id: "minimaxai/minimax-m3.1-flash", label: "MiniMax M3.1 Flash" },
+  { id: "minimaxai/minimax-m3.1", label: "MiniMax M3.1" },
+  { id: "meta/llama-3.3-70b-instruct", label: "Llama 3.3 70B Instruct" },
+  { id: "meta/llama-3.1-8b-instruct", label: "Llama 3.1 8B Instruct" },
+  { id: "nvidia/llama-3.1-nemotron-70b-instruct", label: "Nemotron 70B Instruct" },
+];
+
 /** Vision-capable NVIDIA NIM models accept OpenAI-style image_url content parts. */
 export const AI_VISION_MODEL_HINT =
   /(vision|vl\b|llava|pixtral|gemma-4|muse-glimmer|kimi-k|qwen[^ ]*vl|nemotron[^ ]*(vl|omni)|llama-4|llama-3\.2-(11b|90b)-vision|minimax-m3)/i;

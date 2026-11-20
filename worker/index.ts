@@ -135,6 +135,12 @@ type ProjectRow = {
   source_url?: string | null;
   /** JSON crop/filter presentation for the thumbnail. */
   thumb_style?: string | null;
+  /** Comma-separated tags, max 10. */
+  tags?: string | null;
+  /** JSON fit/crop/filter presentation for the video itself. */
+  video_style?: string | null;
+  /** Declared display preset (auto, 480p … 2160p). Metadata only. */
+  resolution?: string | null;
 };
 
 /** Screen layouts that can be pinned from the dashboard ("auto" follows the file). */
@@ -171,6 +177,9 @@ function ensureSortOrder(env: Env): Promise<void> {
         ["duration_seconds", "ALTER TABLE projects ADD COLUMN duration_seconds REAL"],
         ["source_url", "ALTER TABLE projects ADD COLUMN source_url TEXT"],
         ["thumb_style", "ALTER TABLE projects ADD COLUMN thumb_style TEXT"],
+        ["tags", "ALTER TABLE projects ADD COLUMN tags TEXT"],
+        ["video_style", "ALTER TABLE projects ADD COLUMN video_style TEXT"],
+        ["resolution", "ALTER TABLE projects ADD COLUMN resolution TEXT"],
       ];
       for (const [name, sql] of columns) {
         if (!has.has(name)) await env.DB.prepare(sql).run();
@@ -277,6 +286,9 @@ function toPublicProject(row: ProjectRow) {
     thumbUrl: row.thumb_key ? `/media/${row.thumb_key}` : null,
     sourceUrl: row.source_url ?? null,
     thumbStyle: parseStoredStyle(row.thumb_style),
+    videoStyle: parseStoredStyle(row.video_style),
+    tags: readStoredTags(row.tags),
+    resolution: row.resolution ?? null,
     ratio: row.display_ratio ?? null,
     width: row.asset_width ?? null,
     height: row.asset_height ?? null,
@@ -300,6 +312,9 @@ function toAdminProject(row: ProjectRow) {
     assetSize: row.asset_size,
     sourceUrl: row.source_url ?? null,
     thumbStyle: parseStoredStyle(row.thumb_style),
+    videoStyle: parseStoredStyle(row.video_style),
+    tags: readStoredTags(row.tags),
+    resolution: row.resolution ?? "auto",
     sortOrder: row.sort_order ?? 0,
     displayRatio: row.display_ratio ?? "auto",
     assetWidth: row.asset_width ?? null,
@@ -346,6 +361,73 @@ function readThumbStyle(value: unknown): string | null {
     blur: Math.round(number("blur", 0, 8, 0)),
     preset,
   });
+}
+
+/** Comma-separated tags, trimmed and de-duplicated, at most 10. */
+function readTags(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const list = Array.isArray(value)
+    ? value.filter((tag): tag is string => typeof tag === "string")
+    : typeof value === "string"
+      ? value.split(",")
+      : [];
+  const clean: string[] = [];
+  for (const tag of list) {
+    const normalized = tag.trim().replace(/\s+/g, " ").slice(0, 24);
+    if (!normalized) continue;
+    if (clean.some((existing) => existing.toLowerCase() === normalized.toLowerCase())) continue;
+    clean.push(normalized);
+    if (clean.length >= 10) break;
+  }
+  return clean.length ? clean.join(",") : null;
+}
+
+function readStoredTags(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((tag) => tag.trim())
+    .filter(Boolean)
+    .slice(0, 10);
+}
+
+/**
+ * Presentation of the video itself (fit, crop, filters). Only values the public
+ * player can actually apply are accepted, so a crafted request cannot store an
+ * arbitrary CSS string.
+ */
+function readVideoStyle(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== "object") return null;
+  const input = value as Record<string, unknown>;
+  const number = (key: string, min: number, max: number, fallback: number): number => {
+    const raw = input[key];
+    if (typeof raw !== "number" || !Number.isFinite(raw)) return fallback;
+    return Math.min(Math.max(raw, min), max);
+  };
+  const presets = ["original", "cinematic", "vivid", "mono", "warm", "cool"];
+  const preset = typeof input.preset === "string" && presets.includes(input.preset) ? input.preset : "original";
+  return JSON.stringify({
+    fit: input.fit === "cover" ? "cover" : "contain",
+    zoom: Number(number("zoom", 1, 3, 1).toFixed(2)),
+    x: Math.round(number("x", 0, 100, 50)),
+    y: Math.round(number("y", 0, 100, 50)),
+    brightness: Math.round(number("brightness", 40, 180, 100)),
+    contrast: Math.round(number("contrast", 40, 200, 100)),
+    saturation: Math.round(number("saturation", 0, 200, 100)),
+    grayscale: Math.round(number("grayscale", 0, 100, 0)),
+    blur: Math.round(number("blur", 0, 8, 0)),
+    preset,
+  });
+}
+
+/** Display presets are labels; nothing is transcoded, so they are honest metadata. */
+const VIDEO_RESOLUTIONS = new Set(["auto", "480p", "720p", "1080p", "1440p", "2160p"]);
+
+function readResolution(value: unknown, fallback: string): string {
+  if (typeof value !== "string") return fallback;
+  const trimmed = value.trim();
+  return VIDEO_RESOLUTIONS.has(trimmed) ? trimmed : fallback;
 }
 
 function readSortOrder(value: unknown, fallback: number): number {
@@ -589,6 +671,9 @@ async function createProject(request: Request, env: Env): Promise<Response> {
   const assetWidth = readNumber(body.assetWidth, 20000);
   const assetHeight = readNumber(body.assetHeight, 20000);
   const thumbStyle = readThumbStyle(body.thumbStyle);
+  const videoStyle = readVideoStyle(body.videoStyle);
+  const tags = readTags(body.tags);
+  const resolution = readResolution(body.resolution, "auto");
   const durationSeconds =
     typeof body.durationSeconds === "number" && Number.isFinite(body.durationSeconds) && body.durationSeconds > 0
       ? Math.min(body.durationSeconds, 86400)
@@ -637,8 +722,8 @@ async function createProject(request: Request, env: Env): Promise<Response> {
   try {
     await env.DB.prepare(
       `INSERT INTO projects
-        (id, kind, title, description, category, status, asset_key, asset_type, asset_size, asset_hash, thumb_key, thumb_type, created_at, updated_at, sort_order, display_ratio, asset_width, asset_height, duration_seconds, source_url, thumb_style)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        (id, kind, title, description, category, status, asset_key, asset_type, asset_size, asset_hash, thumb_key, thumb_type, created_at, updated_at, sort_order, display_ratio, asset_width, asset_height, duration_seconds, source_url, thumb_style, tags, video_style, resolution)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
       .bind(
         id,
@@ -661,7 +746,10 @@ async function createProject(request: Request, env: Env): Promise<Response> {
         assetHeight,
         durationSeconds,
         sourceUrl,
-        thumbStyle
+        thumbStyle,
+        tags,
+        videoStyle,
+        resolution
       )
       .run();
   } catch (error) {
@@ -705,6 +793,11 @@ async function updateProject(request: Request, env: Env, id: string): Promise<Re
   let replacedThumb: string | null = null;
   const displayRatio = readRatio(body.displayRatio, existing.display_ratio ?? null);
   const thumbStyle = body.thumbStyle === undefined ? existing.thumb_style : readThumbStyle(body.thumbStyle);
+  const videoStyle =
+    body.videoStyle === undefined ? existing.video_style ?? null : readVideoStyle(body.videoStyle);
+  const tags =
+    body.tags === undefined ? existing.tags ?? null : readTags(body.tags);
+  const resolution = readResolution(body.resolution, existing.resolution ?? "auto");
   const sortOrder = readSortOrder(body.sortOrder, existing.sort_order ?? 0);
   const assetWidth = body.assetWidth === undefined ? existing.asset_width ?? null : readNumber(body.assetWidth, 20000);
   const assetHeight = body.assetHeight === undefined ? existing.asset_height ?? null : readNumber(body.assetHeight, 20000);
@@ -800,7 +893,7 @@ async function updateProject(request: Request, env: Env, id: string): Promise<Re
           SET title = ?, description = ?, category = ?, status = ?, thumb_key = ?, thumb_type = ?,
               asset_key = ?, asset_type = ?, asset_size = ?, asset_hash = ?, updated_at = ?,
               display_ratio = ?, asset_width = ?, asset_height = ?, duration_seconds = ?,
-              source_url = ?, thumb_style = ?, sort_order = ?
+              source_url = ?, thumb_style = ?, sort_order = ?, tags = ?, video_style = ?, resolution = ?
         WHERE id = ?`
     )
       .bind(
@@ -822,6 +915,9 @@ async function updateProject(request: Request, env: Env, id: string): Promise<Re
         sourceUrl,
         thumbStyle,
         sortOrder,
+        tags,
+        videoStyle,
+        resolution,
         id
       )
       .run();

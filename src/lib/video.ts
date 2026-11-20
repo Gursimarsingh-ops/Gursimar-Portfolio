@@ -11,6 +11,12 @@ export interface VideoSource {
   id: string | null;
 }
 
+/** Presentation of the video itself: fit, crop and tone. */
+export interface VideoStyle extends ThumbStyle {
+  /** contain keeps the whole frame, cover fills the LED screen and crops. */
+  fit?: "contain" | "cover";
+}
+
 export interface ThumbStyle {
   /** 1–3, applied as scale() so the image can be cropped without distortion. */
   zoom?: number;
@@ -113,6 +119,15 @@ export function thumbFilter(style: ThumbStyle | null | undefined): string {
   return parts.join(" ") || "none";
 }
 
+export function videoFit(style: VideoStyle | null | undefined): "contain" | "cover" {
+  return style?.fit === "cover" ? "cover" : "contain";
+}
+
+/** The same filter chain, applied to the player and its poster. */
+export function videoFilter(style: VideoStyle | null | undefined): string {
+  return thumbFilter(style);
+}
+
 export function thumbObjectPosition(style: ThumbStyle | null | undefined): string {
   const x = typeof style?.x === "number" ? Math.min(Math.max(style.x, 0), 100) : 50;
   const y = typeof style?.y === "number" ? Math.min(Math.max(style.y, 0), 100) : 50;
@@ -145,11 +160,20 @@ export const ASPECT_OPTIONS = [
   { id: "custom", label: "Custom dimensions" },
 ] as const;
 
+/**
+ * Display presets. These are labels only: nothing is transcoded, and a YouTube
+ * or Vimeo stream keeps whatever quality the provider serves. For uploaded
+ * files the original quality is preserved.
+ */
 export const VIDEO_RESOLUTIONS = [
-  { id: "3840x2160", label: "3840 × 2160 · 4K UHD", width: 3840, height: 2160 },
-  { id: "2560x1440", label: "2560 × 1440 · QHD", width: 2560, height: 1440 },
-  { id: "1920x1080", label: "1920 × 1080 · Full HD", width: 1920, height: 1080 },
-  { id: "1280x720", label: "1280 × 720 · HD", width: 1280, height: 720 },
-  { id: "1080x1920", label: "1080 × 1920 · Vertical HD", width: 1080, height: 1920 },
-  { id: "1080x1080", label: "1080 × 1080 · Square", width: 1080, height: 1080 },
+  { id: "auto", label: "Original / automatic", width: 0, height: 0 },
+  { id: "480p", label: "480p · SD", width: 854, height: 480 },
+  { id: "720p", label: "720p · HD", width: 1280, height: 720 },
+  { id: "1080p", label: "1080p · Full HD", width: 1920, height: 1080 },
+  { id: "1440p", label: "1440p · QHD", width: 2560, height: 1440 },
+  { id: "2160p", label: "2160p · 4K UHD", width: 3840, height: 2160 },
 ] as const;
+
+export function resolutionLabel(id: string | null | undefined): string {
+  return VIDEO_RESOLUTIONS.find((option) => option.id === id)?.label ?? "Original / automatic";
+}

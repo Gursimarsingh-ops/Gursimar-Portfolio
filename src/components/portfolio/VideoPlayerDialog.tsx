@@ -1,6 +1,13 @@
 import { useState } from "react";
 import { AlertTriangle, X } from "lucide-react";
-import { parseVideoSource } from "@/lib/video";
+import {
+  parseVideoSource,
+  thumbObjectPosition,
+  thumbScale,
+  videoFilter,
+  videoFit,
+  type VideoStyle,
+} from "@/lib/video";
 
 interface Props {
   open: boolean;
@@ -14,6 +21,8 @@ interface Props {
   description?: string;
   /** Optional stored aspect ratio, e.g. "9/16" from the dashboard. */
   ratio?: string | null;
+  /** Administrator's fit, crop and tone settings for the video. */
+  videoStyle?: VideoStyle | null;
 }
 
 export function VideoPlayerDialog({
@@ -26,9 +35,19 @@ export function VideoPlayerDialog({
   posterUrl,
   description,
   ratio,
+  videoStyle,
 }: Props) {
   const [detected, setDetected] = useState<number | null>(null);
   if (!open) return null;
+
+  const filter = videoFilter(videoStyle);
+  const fit = videoFit(videoStyle);
+  const mediaStyle = {
+    filter,
+    objectFit: fit,
+    objectPosition: thumbObjectPosition(videoStyle),
+    transform: `scale(${thumbScale(videoStyle)})`,
+  } as const;
 
   const pinned = ratio && ratio !== "auto" ? ratio.replace("/", " / ") : null;
   const aspect = pinned ?? (detected ? `${detected}` : "16 / 9");
@@ -79,6 +98,7 @@ export function VideoPlayerDialog({
                 <iframe
                   src={external}
                   title={title || "Video"}
+                  style={{ filter }}
                   className="absolute inset-0 h-full w-full"
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
                   allowFullScreen
@@ -96,6 +116,7 @@ export function VideoPlayerDialog({
                   controls
                   playsInline
                   preload="metadata"
+                  style={{ ...mediaStyle, transform: undefined }}
                   className="absolute inset-0 h-full w-full bg-black object-contain"
                 />
               </div>
@@ -126,7 +147,7 @@ export function VideoPlayerDialog({
                   setDetected(element.videoWidth / element.videoHeight);
                 }
               }}
-              style={{ aspectRatio: aspect }}
+              style={{ aspectRatio: aspect, ...mediaStyle }}
               className="max-h-[76vh] w-full bg-black object-contain"
             />
           </div>

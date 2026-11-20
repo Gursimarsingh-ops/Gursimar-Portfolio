@@ -8,6 +8,7 @@ import {
   EyeOff,
   KeyRound,
   Loader2,
+  Plus,
   PlugZap,
   RefreshCw,
   Save,
@@ -22,6 +23,7 @@ import {
   ApiError,
   type AiAppearanceSettings,
   type AiChatTestResult,
+  type AiModelEntry,
   type AiSettingsResponse,
   type AiTestResult,
 } from "@/admin/api";
@@ -101,6 +103,13 @@ export function AiConfigPanel() {
   const [message, setMessage] = useState<{ tone: Tone; text: string } | null>(null);
   const [test, setTest] = useState<AiTestResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [provider, setProvider] = useState("nvidia-nim");
+  const [models, setModels] = useState<AiModelEntry[]>([]);
+  const [defaultModel, setDefaultModel] = useState("");
+  const [topP, setTopP] = useState<number | null>(null);
+  const [modelQuery, setModelQuery] = useState("");
+  const [customModel, setCustomModel] = useState("");
+  const [testingModel, setTestingModel] = useState<string | null>(null);
 
   const hydrate = useCallback((next: AiSettingsResponse) => {
     setData(next);
@@ -116,6 +125,10 @@ export function AiConfigPanel() {
     setMaxTokens(next.settings.maxTokens);
     setTimeoutMs(next.settings.timeoutMs);
     setAppearance(next.settings.appearance);
+    setProvider(next.settings.provider);
+    setModels(next.settings.models ?? []);
+    setDefaultModel(next.settings.defaultModel ?? next.defaultModel);
+    setTopP(next.settings.topP ?? null);
   }, []);
 
   const load = useCallback(async () => {
@@ -140,7 +153,10 @@ export function AiConfigPanel() {
       const next = await api.saveAiSettings({
         enabled,
         model: model.trim(),
-        provider: "nvidia-nim",
+        models,
+        defaultModel: defaultModel.trim(),
+        topP,
+        provider: provider.trim() || "nvidia-nim",
         apiUrl: apiUrl.trim(),
         ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
         knowledge,
@@ -250,6 +266,114 @@ export function AiConfigPanel() {
       });
     } finally {
       setSavingKnowledge(false);
+    }
+  };
+
+  /* ------------------------------ model library ----------------------------- */
+
+  const persistModels = async (next: AiModelEntry[], active?: string, fallback?: string) => {
+    const saved = await api.saveAiSettings({
+      models: next,
+      ...(active ? { model: active } : {}),
+      ...(fallback ? { defaultModel: fallback } : {}),
+    });
+    hydrate(saved);
+    return saved;
+  };
+
+  const addCustomModel = async () => {
+    const id = customModel.trim();
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:/~-]{1,119}$/.test(id)) {
+      setMessage({ tone: "error", text: "Model ids may only contain letters, numbers, . _ : / ~ and -." });
+      return;
+    }
+    if (models.some((entry) => entry.id === id)) {
+      setMessage({ tone: "error", text: "That model is already in the list." });
+      return;
+    }
+    const next: AiModelEntry[] = [
+      ...models,
+      { id, label: id.split("/").pop() ?? id, verifiedAt: null, lastTest: null },
+    ];
+    try {
+      await persistModels(next);
+      setCustomModel("");
+      setMessage({ tone: "success", text: "Model added. Test it before activating it for visitors." });
+    } catch (err) {
+      setMessage({ tone: "error", text: err instanceof ApiError ? err.message : "Could not add the model." });
+    }
+  };
+
+  const editModelLabel = async (id: string, label: string) => {
+    const next = models.map((entry) => (entry.id === id ? { ...entry, label: label.slice(0, 60) } : entry));
+    setModels(next);
+    try {
+      await persistModels(next);
+    } catch (err) {
+      setMessage({ tone: "error", text: err instanceof ApiError ? err.message : "Could not rename the model." });
+    }
+  };
+
+  const removeModel = async (id: string) => {
+    if (models.length <= 1) {
+      setMessage({ tone: "error", text: "Keep at least one model in the list." });
+      return;
+    }
+    const next = models.filter((entry) => entry.id !== id);
+    try {
+      const active = model === id ? next[0].id : undefined;
+      const saved = await api.saveAiSettings({
+        models: next,
+        ...(active ? { model: active } : {}),
+        ...(defaultModel === id ? { defaultModel: next[0].id } : {}),
+      });
+      hydrate(saved);
+      setMessage({ tone: "success", text: "Model removed from the available list." });
+    } catch (err) {
+      setMessage({ tone: "error", text: err instanceof ApiError ? err.message : "Could not remove the model." });
+    }
+  };
+
+  const setDefault = async (id: string) => {
+    try {
+      const saved = await api.saveAiSettings({ defaultModel: id });
+      hydrate(saved);
+      setMessage({ tone: "success", text: `${id} is now the default model.` });
+    } catch (err) {
+      setMessage({ tone: "error", text: err instanceof ApiError ? err.message : "Could not set the default model." });
+    }
+  };
+
+  /** Activation is a server write, so the public assistant uses it immediately. */
+  const activateModel = async (id: string) => {
+    try {
+      const saved = await api.saveAiSettings({ model: id });
+      hydrate(saved);
+      setMessage({ tone: "success", text: `Active model: ${id}. New visitor messages use it immediately.` });
+    } catch (err) {
+      setMessage({ tone: "error", text: err instanceof ApiError ? err.message : "Could not activate the model." });
+    }
+  };
+
+  const testModel = async (id: string) => {
+    setTestingModel(id);
+    setMessage(null);
+    try {
+      const result = await api.testAiConnection({
+        ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
+        apiUrl: apiUrl.trim(),
+        model: id,
+      });
+      setTest(result);
+      await load();
+      setMessage({
+        tone: result.ok ? "success" : "error",
+        text: result.ok ? `${id} verified with a real completion.` : `${id} failed: ${result.message}`,
+      });
+    } catch (err) {
+      setMessage({ tone: "error", text: err instanceof ApiError ? err.message : "The model test failed." });
+    } finally {
+      setTestingModel(null);
     }
   };
 
@@ -374,8 +498,17 @@ export function AiConfigPanel() {
           </div>
 
           <label className="block">
-            <span className={labelCls}>Provider</span>
-            <input value="NVIDIA NIM" readOnly className={cn(inputCls, "cursor-not-allowed text-white/45")} />
+            <span className={labelCls}>Provider name</span>
+            <input
+              value={provider}
+              onChange={(event) => setProvider(event.target.value.slice(0, 40))}
+              placeholder="nvidia-nim"
+              className={inputCls}
+            />
+            <span className="mt-1 block text-[9px] leading-relaxed text-white/25">
+              Any OpenAI-compatible chat completions endpoint works. NVIDIA NIM, OpenRouter, Groq and similar
+              providers are configured with the endpoint below.
+            </span>
           </label>
 
           <label className="block">
@@ -597,6 +730,183 @@ export function AiConfigPanel() {
         </div>
       </div>
 
+      {/* ------------------------------ model library ----------------------------- */}
+      <div className="space-y-3 rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-[10px] uppercase tracking-[0.22em] text-white/60">Model library</p>
+            <p className="mt-1 max-w-2xl text-[10.5px] leading-relaxed text-white/35">
+              Register any model available on the configured endpoint, test it with a real request, then activate it.
+              A model is only marked verified after the provider actually answered.
+            </p>
+          </div>
+          <span className="rounded-full border border-white/12 px-3 py-1 text-[9px] uppercase tracking-[0.14em] text-white/50">
+            Active · {(data?.model ?? model) || "—"}
+          </span>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            value={customModel}
+            onChange={(event) => setCustomModel(event.target.value.slice(0, 120))}
+            placeholder="Add a model id, e.g. meta/llama-3.3-70b-instruct"
+            spellCheck={false}
+            className={cn(inputCls, "mt-0 max-w-md flex-1 font-mono text-[11px]")}
+          />
+          <button
+            type="button"
+            onClick={() => void addCustomModel()}
+            disabled={!customModel.trim()}
+            className="inline-flex items-center gap-1.5 rounded-full border border-white/18 px-3 py-2 text-[9px] uppercase tracking-[0.14em] text-white/70 hover:border-white/35 hover:text-white disabled:opacity-40"
+          >
+            <Plus className="h-3 w-3" /> Add model
+          </button>
+          <label className="relative ml-auto">
+            <input
+              value={modelQuery}
+              onChange={(event) => setModelQuery(event.target.value)}
+              placeholder="Search models"
+              className={cn(inputCls, "mt-0 w-44")}
+            />
+          </label>
+        </div>
+
+        {(data?.catalog ?? []).filter((preset) => !models.some((entry) => entry.id === preset.id)).length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[9px] uppercase tracking-[0.14em] text-white/25">Suggested</span>
+            {(data?.catalog ?? [])
+              .filter((preset) => !models.some((entry) => entry.id === preset.id))
+              .map((preset) => (
+                <button
+                  key={preset.id}
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await persistModels([
+                        ...models,
+                        { id: preset.id, label: preset.label, verifiedAt: null, lastTest: null },
+                      ]);
+                      setMessage({ tone: "success", text: `${preset.id} added. Test it before activating.` });
+                    } catch (err) {
+                      setMessage({
+                        tone: "error",
+                        text: err instanceof ApiError ? err.message : "Could not add the model.",
+                      });
+                    }
+                  }}
+                  className="rounded-full border border-white/12 px-2 py-1 text-[9px] text-white/45 hover:text-white"
+                  title={preset.id}
+                >
+                  {preset.label}
+                </button>
+              ))}
+          </div>
+        )}
+
+        <ul className="space-y-1.5">
+          {models
+            .filter((entry) =>
+              !modelQuery.trim()
+                ? true
+                : `${entry.label} ${entry.id}`.toLowerCase().includes(modelQuery.trim().toLowerCase())
+            )
+            .map((entry) => {
+              const active = (data?.model ?? model) === entry.id;
+              return (
+                <li
+                  key={entry.id}
+                  className={cn(
+                    "flex flex-wrap items-center gap-2 rounded-xl border px-3 py-2",
+                    active ? "border-emerald-400/30 bg-emerald-500/[0.06]" : "border-white/[0.08] bg-black/25"
+                  )}
+                >
+                  <input
+                    defaultValue={entry.label}
+                    onBlur={(event) => {
+                      if (event.target.value.trim() && event.target.value.trim() !== entry.label) {
+                        void editModelLabel(entry.id, event.target.value.trim());
+                      }
+                    }}
+                    aria-label={`Label for ${entry.id}`}
+                    className="w-36 rounded-md border border-white/10 bg-black/40 px-2 py-1 text-[10.5px] text-white outline-none focus:border-cyan-300/45"
+                  />
+                  <span className="min-w-0 flex-1 truncate font-mono text-[9.5px] text-white/40" title={entry.id}>
+                    {entry.id}
+                  </span>
+                  {entry.verifiedAt ? (
+                    <span className="rounded-full bg-emerald-400/15 px-2 py-0.5 text-[8px] uppercase tracking-[0.12em] text-emerald-200">
+                      verified · {formatWhen(entry.verifiedAt)}
+                    </span>
+                  ) : (
+                    <span className="rounded-full bg-amber-300/10 px-2 py-0.5 text-[8px] uppercase tracking-[0.12em] text-amber-200/80">
+                      unverified
+                    </span>
+                  )}
+                  {defaultModel === entry.id && (
+                    <span className="rounded-full bg-sky-400/15 px-2 py-0.5 text-[8px] uppercase tracking-[0.12em] text-sky-200">
+                      default
+                    </span>
+                  )}
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => void activateModel(entry.id)}
+                      disabled={active}
+                      className="rounded-md border border-white/14 px-2 py-1 text-[8.5px] uppercase tracking-[0.12em] text-white/60 hover:bg-white/5 hover:text-white disabled:opacity-35"
+                    >
+                      {active ? "Active" : "Activate"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void testModel(entry.id)}
+                      disabled={testingModel !== null}
+                      className="inline-flex items-center gap-1 rounded-md border border-white/14 px-2 py-1 text-[8.5px] uppercase tracking-[0.12em] text-white/60 hover:bg-white/5 hover:text-white disabled:opacity-40"
+                    >
+                      {testingModel === entry.id ? (
+                        <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                      ) : (
+                        <PlugZap className="h-2.5 w-2.5" />
+                      )}
+                      Test
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void setDefault(entry.id)}
+                      disabled={defaultModel === entry.id}
+                      className="rounded-md border border-white/14 px-2 py-1 text-[8.5px] uppercase tracking-[0.12em] text-white/60 hover:bg-white/5 hover:text-white disabled:opacity-35"
+                    >
+                      Default
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void removeModel(entry.id)}
+                      aria-label={`Remove ${entry.id}`}
+                      className="grid h-6 w-6 place-items-center rounded-md border border-red-400/20 text-red-200/70 hover:bg-red-500/10"
+                    >
+                      <Trash2 className="h-2.5 w-2.5" />
+                    </button>
+                  </div>
+                  {entry.lastTest && (
+                    <p
+                      className={cn(
+                        "w-full truncate text-[9px]",
+                        entry.lastTest.ok ? "text-emerald-200/70" : "text-red-200/70"
+                      )}
+                    >
+                      Last test {formatWhen(entry.lastTest.at)} · HTTP {entry.lastTest.status ?? "—"} ·{" "}
+                      {entry.lastTest.latencyMs} ms · {entry.lastTest.message}
+                    </p>
+                  )}
+                </li>
+              );
+            })}
+        </ul>
+        <p className="text-[9px] leading-relaxed text-white/25">
+          Changing the active model is saved on the server, so the public assistant uses it on its next reply without
+          a new deployment. If a model fails, the real provider error is kept here and no other model is substituted.
+        </p>
+      </div>
+
       {/* --------------------------- general & model --------------------------- */}
       <div className="grid gap-4 xl:grid-cols-2">
         <div className="space-y-3 rounded-2xl border border-white/10 bg-white/[0.03] p-5">
@@ -695,9 +1005,32 @@ export function AiConfigPanel() {
             </label>
           </div>
 
+          <label className="block">
+            <span className={cn(labelCls, "flex items-center justify-between")}>
+              Top-p
+              <span className="text-white/60">{topP === null ? "provider default" : topP.toFixed(2)}</span>
+            </span>
+            <input
+              type="range"
+              min={0.05}
+              max={1}
+              step={0.05}
+              value={topP ?? 1}
+              onChange={(event) => setTopP(Number(event.target.value))}
+              className="mt-2 w-full accent-white"
+            />
+            <button
+              type="button"
+              onClick={() => setTopP(null)}
+              className="mt-1 text-[9px] uppercase tracking-[0.12em] text-white/35 hover:text-white"
+            >
+              Use provider default
+            </button>
+          </label>
+
           <p className="text-[9px] leading-relaxed text-white/25">
-            These values are sent with every visitor request and every test. The provider is fixed to NVIDIA NIM
-            because the endpoint and authentication format are provider-specific.
+            These values are sent with every visitor request and every test. Top-p is omitted from the request when
+            it is left at the provider default, because not every compatible provider accepts it.
           </p>
         </div>
       </div>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { ThumbStyle } from "@/lib/video";
+import type { ThumbStyle, VideoStyle } from "@/lib/video";
 
 export interface PublicProject {
   id: string;
@@ -12,6 +12,10 @@ export interface PublicProject {
   /** Present for externally hosted videos. */
   sourceUrl?: string | null;
   thumbStyle?: ThumbStyle | null;
+  videoStyle?: VideoStyle | null;
+  tags?: string[];
+  /** Display preset label only; playback quality stays with the source. */
+  resolution?: string | null;
   ratio?: string | null;
   width?: number | null;
   height?: number | null;

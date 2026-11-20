@@ -16,6 +16,11 @@ export interface AdminProject {
   sourceUrl: string | null;
   /** Thumbnail crop/filter presentation. */
   thumbStyle: Record<string, unknown> | null;
+  /** Video fit/crop/filter presentation. */
+  videoStyle: Record<string, unknown> | null;
+  tags: string[];
+  /** Display preset label (auto, 480p … 2160p); nothing is transcoded. */
+  resolution: string;
   sortOrder: number;
   displayRatio: string;
   assetWidth: number | null;
@@ -153,11 +158,29 @@ export interface AiErrorEntry {
   message: string;
 }
 
+export interface AiModelTest {
+  at: string;
+  ok: boolean;
+  status: number | null;
+  latencyMs: number;
+  message: string;
+}
+
+export interface AiModelEntry {
+  id: string;
+  label: string;
+  verifiedAt: string | null;
+  lastTest: AiModelTest | null;
+}
+
 export interface AiSettingsResponse {
   settings: {
     enabled: boolean;
     model: string;
     provider: string;
+    models: AiModelEntry[];
+    defaultModel: string;
+    topP: number | null;
     apiUrl: string;
     knowledge: string;
     assistantName: string;
@@ -184,6 +207,7 @@ export interface AiSettingsResponse {
   defaultModel: string;
   defaultApiUrl: string;
   defaultProvider: string;
+  catalog: { id: string; label: string }[];
   envModel: string | null;
   providerEnv: string | null;
   /** Only present on the administrator endpoint. */
@@ -197,6 +221,7 @@ export interface AiChatTestResult {
   model: string;
   message: string;
   diagnostics?: string;
+  category?: string;
 }
 
 export interface AiTestResult {
@@ -208,6 +233,10 @@ export interface AiTestResult {
   message: string;
   reply?: string;
   diagnostics?: string;
+  category?: string;
+  retryable?: boolean;
+  retryAfterMs?: number | null;
+  publicMessage?: string;
 }
 
 export interface SecurityInfo {
@@ -371,6 +400,9 @@ export const api = {
     durationSeconds?: number | null;
     sourceUrl?: string;
     thumbStyle?: Record<string, unknown> | null;
+    videoStyle?: Record<string, unknown> | null;
+    tags?: string[] | string | null;
+    resolution?: string;
     sortOrder?: number;
   }) =>
     request<{ project: AdminProject }>("/api/admin/projects", {
@@ -393,6 +425,9 @@ export const api = {
       durationSeconds: number | null;
       sourceUrl: string;
       thumbStyle: Record<string, unknown> | null;
+      videoStyle: Record<string, unknown> | null;
+      tags: string[] | string | null;
+      resolution: string;
       sortOrder: number;
     }>
   ) =>
@@ -471,6 +506,9 @@ export const api = {
   saveAiSettings: (payload: {
     enabled?: boolean;
     model?: string;
+    models?: AiModelEntry[];
+    defaultModel?: string;
+    topP?: number | null;
     provider?: string;
     apiUrl?: string;
     assistantName?: string;

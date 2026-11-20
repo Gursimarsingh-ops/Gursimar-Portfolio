@@ -3,7 +3,7 @@ import { VIDEO_CATEGORIES } from "@/data/video-editing";
 import { ScreenFrame } from "@/components/portfolio/ScreenFrame";
 import { VideoPlayerDialog } from "@/components/portfolio/VideoPlayerDialog";
 import { usePublishedProjects } from "@/lib/portfolio";
-import { fallbackPoster, type ThumbStyle } from "@/lib/video";
+import { fallbackPoster, type ThumbStyle, type VideoStyle } from "@/lib/video";
 import { cn } from "@/lib/utils";
 
 interface Playing {
@@ -15,6 +15,7 @@ interface Playing {
   description?: string;
   ratio?: string | null;
   thumbStyle?: ThumbStyle | null;
+  videoStyle?: VideoStyle | null;
 }
 
 export function VideoPortfolio() {
@@ -108,6 +109,7 @@ export function VideoPortfolio() {
                   description: project.description,
                   ratio: project.ratio,
                   thumbStyle: project.thumbStyle,
+                  videoStyle: project.videoStyle,
                 })
               }
             />
@@ -125,6 +127,7 @@ export function VideoPortfolio() {
         posterUrl={playing?.posterUrl}
         description={playing?.description}
         ratio={playing?.ratio}
+        videoStyle={playing?.videoStyle}
       />
     </section>
   );
