@@ -253,8 +253,12 @@ async function b2Failure(response: Response, action: string): Promise<StorageErr
   if (response.status >= 400 && response.status < 500) {
     const code = xmlValue(detail, "Code") ?? detail.replace(/<[^>]*>/g, " ").trim().slice(0, 160);
     const message = xmlValue(detail, "Message") ?? "";
+    // The request id lets Backblaze support trace a denied call. No key id,
+    // secret or Authorization header is ever logged.
+    const requestId = response.headers.get("x-amz-request-id") ?? response.headers.get("x-bz-request-id") ?? "";
     console.error(
-      `Backblaze rejected ${action} (${response.status}): ${code}${message ? ` — ${message}` : ""}`
+      `Backblaze rejected ${action} (${response.status}): ${code}${message ? ` — ${message}` : ""}` +
+        (requestId ? ` [request ${requestId}]` : "")
     );
   }
   const hint =
@@ -297,13 +301,40 @@ function xmlEscape(value: string): string {
 
 /* ---------------------------------- reads --------------------------------- */
 
+/**
+ * Object metadata, read with a 1-byte ranged GET instead of HEAD.
+ *
+ * Backblaze's S3-compatible layer answers HEAD on objects in a
+ * bucket-restricted application key with 403 Forbidden while the very same key
+ * is allowed to PUT, GET, LIST and DELETE those objects — a real upload was
+ * written and streamed publicly, yet its HEAD probe was denied. A HEAD reply
+ * carries no body, so B2's error code is invisible, which made the rejection
+ * look like bad credentials. A ranged GET returns the same headers (content
+ * type, ETag, x-amz-meta-*), the real size via Content-Range, and B2's XML
+ * error code when something genuinely fails.
+ */
 export async function headObject(env: StorageEnv, key: string): Promise<StoredObject | null> {
   const config = b2Config(env);
   if (!config) return null;
 
-  const response = await b2Fetch(config, { method: "HEAD", key });
-  if (response.ok) {
-    const length = Number(response.headers.get("content-length") ?? "0");
+  const response = await b2Fetch(config, { method: "GET", key, headers: { range: "bytes=0-0" } });
+  if (response.status === 416) {
+    // An empty object cannot satisfy a range, but it does exist.
+    if (response.body) await response.body.cancel().catch(() => undefined);
+    return {
+      size: 0,
+      contentType: response.headers.get("content-type"),
+      sha256: response.headers.get("x-amz-meta-sha256"),
+      originalName: response.headers.get("x-amz-meta-original-name"),
+      etag: response.headers.get("etag"),
+    };
+  }
+  if (response.ok || response.status === 206) {
+    const range = response.headers.get("content-range") ?? "";
+    const total = range.match(/\/(\d+)\s*$/)?.[1];
+    const length = Number(total ?? response.headers.get("content-length") ?? "0");
+    // Never buffer the object: only its headers are needed here.
+    if (response.body) await response.body.cancel().catch(() => undefined);
     return {
       size: Number.isFinite(length) ? length : 0,
       contentType: response.headers.get("content-type"),
