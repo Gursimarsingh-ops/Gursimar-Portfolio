@@ -123,7 +123,7 @@ export function ScreenFrame({
             <span className="h-1 w-1 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.9)] animate-pulse" />
           </span>
 
-          <span className="min-w-0 flex-1 truncate text-[8.5px] font-semibold uppercase leading-none tracking-[0.14em] text-neutral-100 sm:text-[9px] sm:tracking-[0.16em]">
+          <span className="min-w-0 flex-1 truncate text-[9px] font-semibold uppercase leading-none tracking-[0.1em] text-neutral-100 sm:text-[9.5px] sm:tracking-[0.14em]">
             {classificationLabel(classification)}
           </span>
 
