@@ -72,11 +72,16 @@ export const MAX_PARTS = 10_000;
 
 export class StorageError extends Error {
   status: number;
+  /** Backblaze's own error code, when it returned one (e.g. AccessDenied). */
+  code: string | null;
+  requestId: string | null;
 
-  constructor(message: string, status = 502) {
+  constructor(message: string, status = 502, code: string | null = null, requestId: string | null = null) {
     super(message);
     this.name = "StorageError";
     this.status = status;
+    this.code = code;
+    this.requestId = requestId;
   }
 }
 
@@ -253,26 +258,29 @@ async function b2Failure(response: Response, action: string): Promise<StorageErr
   } catch {
     detail = "";
   }
+  const code = xmlValue(detail, "Code") ?? (detail.replace(/<[^>]*>/g, " ").trim().slice(0, 160) || null);
+  const message = xmlValue(detail, "Message") ?? "";
+  const requestId = response.headers.get("x-amz-request-id") ?? response.headers.get("x-bz-request-id") ?? null;
+
   // Log Backblaze's own error code/message (never the credentials) so a rejected
   // key can be told apart from a missing bucket or a read-only key.
-  if (response.status >= 400 && response.status < 500) {
-    const code = xmlValue(detail, "Code") ?? detail.replace(/<[^>]*>/g, " ").trim().slice(0, 160);
-    const message = xmlValue(detail, "Message") ?? "";
-    // The request id lets Backblaze support trace a denied call. No key id,
-    // secret or Authorization header is ever logged.
-    const requestId = response.headers.get("x-amz-request-id") ?? response.headers.get("x-bz-request-id") ?? "";
-    console.error(
-      `Backblaze rejected ${action} (${response.status}): ${code}${message ? ` — ${message}` : ""}` +
-        (requestId ? ` [request ${requestId}]` : "")
-    );
-  }
+  console.error(
+    `Backblaze rejected ${action} (${response.status}) ${code ?? ""}${message ? ` — ${message}` : ""}` +
+      (requestId ? ` [request ${requestId}]` : "")
+  );
+
   const hint =
     response.status === 401 || response.status === 403
-      ? "Backblaze rejected the application key (check B2_APPLICATION_KEY_ID / B2_APPLICATION_KEY and its bucket capabilities)."
+      ? "Backblaze rejected the request (check the application key and its bucket capabilities)."
       : response.status === 404
         ? "The bucket or object was not found."
-        : detail || response.statusText;
-  return new StorageError(`${action} failed (${response.status}). ${hint}`, response.status);
+        : message || detail || response.statusText;
+  return new StorageError(
+    `${action} failed (${response.status}). ${hint}`,
+    response.status,
+    code,
+    requestId
+  );
 }
 
 /* ---------------------------------- XML ----------------------------------- */

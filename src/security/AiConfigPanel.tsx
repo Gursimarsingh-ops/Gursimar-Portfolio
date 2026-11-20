@@ -106,6 +106,7 @@ export function AiConfigPanel() {
   const [provider, setProvider] = useState("nvidia-nim");
   const [models, setModels] = useState<AiModelEntry[]>([]);
   const [defaultModel, setDefaultModel] = useState("");
+  const [publicSelector, setPublicSelector] = useState(true);
   const [topP, setTopP] = useState<number | null>(null);
   const [modelQuery, setModelQuery] = useState("");
   const [customModel, setCustomModel] = useState("");
@@ -128,6 +129,7 @@ export function AiConfigPanel() {
     setProvider(next.settings.provider);
     setModels(next.settings.models ?? []);
     setDefaultModel(next.settings.defaultModel ?? next.defaultModel);
+    setPublicSelector(next.settings.publicModelSelector !== false);
     setTopP(next.settings.topP ?? null);
   }, []);
 
@@ -155,6 +157,7 @@ export function AiConfigPanel() {
         model: model.trim(),
         models,
         defaultModel: defaultModel.trim(),
+        publicModelSelector: publicSelector,
         topP,
         provider: provider.trim() || "nvidia-nim",
         apiUrl: apiUrl.trim(),
@@ -293,7 +296,7 @@ export function AiConfigPanel() {
     }
     const next: AiModelEntry[] = [
       ...models,
-      { id, label: id.split("/").pop() ?? id, verifiedAt: null, lastTest: null },
+      { id, label: id.split("/").pop() ?? id, enabled: true, provider: null, endpoint: null, verifiedAt: null, lastTest: null },
     ];
     try {
       await persistModels(next);
@@ -311,6 +314,31 @@ export function AiConfigPanel() {
       await persistModels(next);
     } catch (err) {
       setMessage({ tone: "error", text: err instanceof ApiError ? err.message : "Could not rename the model." });
+    }
+  };
+
+  /** Public visibility, provider and endpoint are saved per model. */
+  const updateModel = async (id: string, patch: Partial<AiModelEntry>) => {
+    const next = models.map((entry) => (entry.id === id ? { ...entry, ...patch } : entry));
+    setModels(next);
+    try {
+      await persistModels(next);
+    } catch (err) {
+      setMessage({ tone: "error", text: err instanceof ApiError ? err.message : "Could not update the model." });
+    }
+  };
+
+  const moveModel = async (id: string, direction: -1 | 1) => {
+    const index = models.findIndex((entry) => entry.id === id);
+    const target = index + direction;
+    if (index < 0 || target < 0 || target >= models.length) return;
+    const next = [...models];
+    [next[index], next[target]] = [next[target], next[index]];
+    setModels(next);
+    try {
+      await persistModels(next);
+    } catch (err) {
+      setMessage({ tone: "error", text: err instanceof ApiError ? err.message : "Could not reorder the models." });
     }
   };
 
@@ -737,12 +765,24 @@ export function AiConfigPanel() {
             <p className="text-[10px] uppercase tracking-[0.22em] text-white/60">Model library</p>
             <p className="mt-1 max-w-2xl text-[10.5px] leading-relaxed text-white/35">
               Register any model available on the configured endpoint, test it with a real request, then activate it.
-              A model is only marked verified after the provider actually answered.
+              A model is only marked verified after the provider actually answered, and only public + verified models
+              appear for visitors.
             </p>
           </div>
-          <span className="rounded-full border border-white/12 px-3 py-1 text-[9px] uppercase tracking-[0.14em] text-white/50">
-            Active · {(data?.model ?? model) || "—"}
-          </span>
+          <div className="flex flex-col items-end gap-1.5">
+            <span className="rounded-full border border-white/12 px-3 py-1 text-[9px] uppercase tracking-[0.14em] text-white/50">
+              Active · {(data?.model ?? model) || "—"}
+            </span>
+            <label className="flex cursor-pointer items-center gap-2 text-[9px] uppercase tracking-[0.12em] text-white/40">
+              <input
+                type="checkbox"
+                checked={publicSelector}
+                onChange={(event) => setPublicSelector(event.target.checked)}
+                className="h-3 w-3 accent-emerald-400"
+              />
+              Public model selector
+            </label>
+          </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -784,7 +824,15 @@ export function AiConfigPanel() {
                     try {
                       await persistModels([
                         ...models,
-                        { id: preset.id, label: preset.label, verifiedAt: null, lastTest: null },
+                        {
+                          id: preset.id,
+                          label: preset.label,
+                          enabled: true,
+                          provider: null,
+                          endpoint: null,
+                          verifiedAt: null,
+                          lastTest: null,
+                        },
                       ]);
                       setMessage({ tone: "success", text: `${preset.id} added. Test it before activating.` });
                     } catch (err) {
@@ -847,7 +895,35 @@ export function AiConfigPanel() {
                       default
                     </span>
                   )}
+                  <label
+                    className="flex cursor-pointer items-center gap-1 text-[8px] uppercase tracking-[0.12em] text-white/45"
+                    title="Show this model in the public model selector"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={entry.enabled}
+                      onChange={(event) => void updateModel(entry.id, { enabled: event.target.checked })}
+                      className="h-3 w-3 accent-emerald-400"
+                    />
+                    public
+                  </label>
                   <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => void moveModel(entry.id, -1)}
+                      aria-label={`Move ${entry.id} up`}
+                      className="grid h-6 w-5 place-items-center rounded-md border border-white/14 text-[9px] text-white/50 hover:text-white"
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void moveModel(entry.id, 1)}
+                      aria-label={`Move ${entry.id} down`}
+                      className="grid h-6 w-5 place-items-center rounded-md border border-white/14 text-[9px] text-white/50 hover:text-white"
+                    >
+                      ↓
+                    </button>
                     <button
                       type="button"
                       onClick={() => void activateModel(entry.id)}
@@ -886,10 +962,33 @@ export function AiConfigPanel() {
                       <Trash2 className="h-2.5 w-2.5" />
                     </button>
                   </div>
+                  <div className="flex w-full flex-wrap items-center gap-1.5">
+                    <input
+                      defaultValue={entry.provider ?? ""}
+                      onBlur={(event) => {
+                        const value = event.target.value.trim();
+                        if ((entry.provider ?? "") !== value) void updateModel(entry.id, { provider: value || null });
+                      }}
+                      placeholder="Provider (optional)"
+                      aria-label={`Provider for ${entry.id}`}
+                      className="w-32 rounded-md border border-white/10 bg-black/40 px-2 py-1 text-[9px] text-white/80 outline-none focus:border-cyan-300/45"
+                    />
+                    <input
+                      defaultValue={entry.endpoint ?? ""}
+                      onBlur={(event) => {
+                        const value = event.target.value.trim();
+                        if ((entry.endpoint ?? "") !== value) void updateModel(entry.id, { endpoint: value || null });
+                      }}
+                      placeholder="Custom endpoint (optional, https://…)"
+                      aria-label={`Endpoint for ${entry.id}`}
+                      spellCheck={false}
+                      className="min-w-0 flex-1 rounded-md border border-white/10 bg-black/40 px-2 py-1 font-mono text-[9px] text-white/70 outline-none focus:border-cyan-300/45"
+                    />
+                  </div>
                   {entry.lastTest && (
                     <p
                       className={cn(
-                        "w-full truncate text-[9px]",
+                        "w-full text-[9px]",
                         entry.lastTest.ok ? "text-emerald-200/70" : "text-red-200/70"
                       )}
                     >

@@ -96,6 +96,72 @@ export function isConfigured(env: AuthEnv): boolean {
   return Boolean(env.ADMIN_EMAIL?.trim() && stored && stored.split(stored.includes(":") ? ":" : "$").length === 4);
 }
 
+/* ------------------------- administrator account -------------------------- */
+
+/** D1 settings keys that override the ADMIN_EMAIL / ADMIN_PASSWORD_HASH secrets. */
+export const SETTING_ADMIN_EMAIL = "admin_email";
+export const SETTING_ADMIN_PASSWORD_HASH = "admin_password_hash";
+
+export interface AdminCredentials {
+  email: string;
+  passwordHash: string;
+  /** dashboard = changed in the Security Dashboard; environment = Worker secret. */
+  source: "dashboard" | "environment" | "none";
+}
+
+async function readSetting(db: D1Database, key: string): Promise<string> {
+  try {
+    const row = await db.prepare("SELECT value FROM settings WHERE key = ?").bind(key).first<{ value: string }>();
+    return (row?.value ?? "").trim();
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Resolves the active administrator credentials. A value saved from the
+ * dashboard wins; the Worker secrets remain the fallback, so an existing
+ * deployment keeps working and a lost database still allows sign-in.
+ */
+export async function readAdminCredentials(env: AuthEnv): Promise<AdminCredentials> {
+  let email = "";
+  let passwordHash = "";
+  if (env.DB) {
+    email = await readSetting(env.DB, SETTING_ADMIN_EMAIL);
+    passwordHash = await readSetting(env.DB, SETTING_ADMIN_PASSWORD_HASH);
+  }
+  if (email && passwordHash) return { email: email.toLowerCase(), passwordHash, source: "dashboard" };
+
+  const envEmail = (env.ADMIN_EMAIL ?? "").trim().toLowerCase();
+  const envHash = (env.ADMIN_PASSWORD_HASH ?? "").trim();
+  if (envEmail && envHash) return { email: envEmail, passwordHash: envHash, source: "environment" };
+  return { email: email || envEmail, passwordHash: passwordHash || envHash, source: "none" };
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+/**
+ * Produces the `pbkdf2:iterations:salt:hash` value accepted by verifyPassword.
+ * 100,000 PBKDF2-SHA256 iterations is the Workers WebCrypto ceiling and matches
+ * the format produced by scripts/hash-admin-password.mjs.
+ */
+export async function hashPassword(password: string): Promise<string> {
+  const iterations = 100_000;
+  const salt = new Uint8Array(16);
+  crypto.getRandomValues(salt);
+  const key = await crypto.subtle.importKey("raw", encoder.encode(password), "PBKDF2", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", hash: "SHA-256", salt, iterations },
+    key,
+    256
+  );
+  return `pbkdf2:${iterations}:${bytesToBase64(salt)}:${bytesToBase64(new Uint8Array(bits))}`;
+}
+
 const SIGNED_PREFIX = "v1";
 
 async function hmacHex(secret: string, message: string): Promise<string> {

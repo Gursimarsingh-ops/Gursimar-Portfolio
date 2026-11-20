@@ -179,6 +179,11 @@ export interface AiStatus {
   configured: boolean;
   provider: string;
   model: string;
+  /** Model used when the visitor has not chosen one. */
+  defaultModel?: string;
+  /** Models the administrator made public and that have answered a real test. */
+  models?: { id: string; label: string }[];
+  publicModelSelector?: boolean;
   vision?: boolean;
   assistantName?: string;
   welcomeMessage?: string;
@@ -208,13 +213,19 @@ export function askAssistant(
   threadId: string,
   message: string,
   files: File[],
+  model?: string | null,
   onProgress?: (percent: number) => void
-): Promise<{ threadId: string; reply: string; attachments: AiAttachment[] }> {
+): Promise<{ threadId: string; reply: string; model?: string; attachments: AiAttachment[] }> {
   const form = new FormData();
   form.append("threadId", threadId);
   form.append("message", message);
+  if (model) form.append("model", model);
   files.forEach((file) => form.append("files", file));
-  return upload<{ threadId: string; reply: string; attachments: AiAttachment[] }>("/api/ai/chat", form, onProgress);
+  return upload<{ threadId: string; reply: string; model?: string; attachments: AiAttachment[] }>(
+    "/api/ai/chat",
+    form,
+    onProgress
+  );
 }
 
 export interface AiHistoryMessage {

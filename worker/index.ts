@@ -5,13 +5,15 @@ import {
   createSession,
   destroySession,
   getSession,
-  isConfigured,
   isRateLimited,
+  readAdminCredentials,
   recordFailure,
   sha256Hex,
   verifyPassword,
 } from "./auth";
 import { aiRuntime, handlePortalApi } from "./portal";
+import { adminAccountStatus, changeAdminAccount } from "./account";
+import { runStorageDiagnostic } from "./storage-diagnostic";
 import { ensureSchema } from "./schema";
 import {
   abortMultipartUpload,
@@ -519,8 +521,9 @@ async function login(request: Request, env: Env): Promise<Response> {
     console.warn("Login rejected: origin not allowed");
     return fail("Invalid origin", 403);
   }
-  if (!isConfigured(env)) {
-    console.error("Login rejected: ADMIN_EMAIL / ADMIN_PASSWORD_HASH are not configured on this deployment");
+  const credentials = await readAdminCredentials(env);
+  if (!credentials.email || !credentials.passwordHash) {
+    console.error("Login rejected: no administrator credentials (dashboard or Worker secrets)");
     return fail(
       "Admin credentials are not configured. Set ADMIN_EMAIL and ADMIN_PASSWORD_HASH as Worker secrets.",
       503
@@ -540,8 +543,8 @@ async function login(request: Request, env: Env): Promise<Response> {
       return fail("Email and password are required.", 400);
     }
 
-    const expectedEmail = (env.ADMIN_EMAIL ?? "").trim().toLowerCase();
-    const passwordOk = await verifyPassword(password, env.ADMIN_PASSWORD_HASH);
+    const expectedEmail = credentials.email;
+    const passwordOk = await verifyPassword(password, credentials.passwordHash);
     const emailOk = email === expectedEmail;
 
     if (!passwordOk || !emailOk) {
@@ -1438,9 +1441,10 @@ async function status(env: Env): Promise<Response> {
     "SELECT COUNT(*) AS assets, COALESCE(SUM(asset_size), 0) AS bytes FROM projects"
   ).first<{ assets: number; bytes: number }>();
 
+  const adminCredentials = await readAdminCredentials(env);
   return json({
-    configured: isConfigured(env),
-    email: env.ADMIN_EMAIL ?? null,
+    configured: Boolean(adminCredentials.email && adminCredentials.passwordHash),
+    email: adminCredentials.email || null,
     database: { ok: true },
     storage: {
       ok: storageOk,
@@ -1719,7 +1723,8 @@ async function adminHealth(request: Request, env: Env): Promise<Response> {
   } catch {
     sessionRows = null;
   }
-  const credentialsConfigured = isConfigured(env);
+  const adminCredentials = await readAdminCredentials(env);
+  const credentialsConfigured = Boolean(adminCredentials.email && adminCredentials.passwordHash);
 
   const ai = await aiRuntime(env);
   const aiConfigured = ai.configured && ai.enabled;
@@ -1819,7 +1824,7 @@ async function adminHealth(request: Request, env: Env): Promise<Response> {
       provider,
       bucket: provider === "backblaze-b2" ? (env.B2_BUCKET_NAME ?? null) : null,
     },
-    auth: { configured: credentialsConfigured, email: env.ADMIN_EMAIL?.trim() ?? null },
+    auth: { configured: credentialsConfigured, email: adminCredentials.email || null },
     maintenance: { enabled: maintenance?.value === "on", updatedAt: maintenance?.updatedAt ?? null },
     edge: { colo: cf?.colo ?? null, country: cf?.country ?? null },
     limits: { imageBytes: LIMITS.image, videoBytes: LIMITS.video, thumbnailBytes: LIMITS.thumbnail },
@@ -1858,11 +1863,25 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
   if (path === `${ADMIN}/session` && method === "GET") {
     const ok = await getSession(env, request);
     if (!ok) return fail("Unauthorized", 401);
-    return json({ authenticated: true, email: env.ADMIN_EMAIL ?? null });
+    const credentials = await readAdminCredentials(env);
+    return json({ authenticated: true, email: credentials.email || null });
   }
   if (path === `${ADMIN}/session`) return methodNotAllowed("GET");
   if (path === `${ADMIN}/logout` && method === "POST") return logout(request, env);
   if (path === `${ADMIN}/logout`) return methodNotAllowed("POST");
+
+  // Administrator account (email/password) and the storage diagnostic own their
+  // origin checks and validation, but still require a live admin session here.
+  if (path === `${ADMIN}/account` && (method === "GET" || method === "POST")) {
+    const denied = await requireAdmin(request, env, method === "POST");
+    if (denied) return denied;
+    return method === "GET" ? adminAccountStatus(env) : changeAdminAccount(request, env);
+  }
+  if (path === `${ADMIN}/storage/diagnostic` && method === "POST") {
+    const denied = await requireAdmin(request, env, true);
+    if (denied) return denied;
+    return runStorageDiagnostic(env);
+  }
 
   const portal = await handlePortalApi(request, env, url, {
     requireAdmin: (req, portalEnv, mutating) => requireAdmin(req, portalEnv as Env, mutating),

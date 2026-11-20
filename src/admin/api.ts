@@ -169,6 +169,11 @@ export interface AiModelTest {
 export interface AiModelEntry {
   id: string;
   label: string;
+  /** Offered to visitors on the public selector. */
+  enabled: boolean;
+  /** Optional provider label / endpoint; null uses the global ones. */
+  provider: string | null;
+  endpoint: string | null;
   verifiedAt: string | null;
   lastTest: AiModelTest | null;
 }
@@ -180,6 +185,7 @@ export interface AiSettingsResponse {
     provider: string;
     models: AiModelEntry[];
     defaultModel: string;
+    publicModelSelector: boolean;
     topP: number | null;
     apiUrl: string;
     knowledge: string;
@@ -366,6 +372,44 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return data as T;
 }
 
+export interface AdminAccountInfo {
+  email: string | null;
+  source: "dashboard" | "environment" | "none";
+  activeSessions: number;
+  minPasswordLength: number;
+}
+
+export interface AdminAccountChangeResult {
+  email: string;
+  source: "dashboard";
+  emailChanged: boolean;
+  passwordChanged: boolean;
+  sessionsRevoked: number;
+  activeSessions: number;
+}
+
+export interface StorageDiagnosticStep {
+  id: string;
+  label: string;
+  status: "ok" | "warn" | "fail";
+  detail: string;
+  latencyMs: number;
+  httpStatus: number | null;
+  code: string | null;
+  capability: string;
+}
+
+export interface StorageDiagnosticResult {
+  configured: boolean;
+  provider: string;
+  endpoint?: string;
+  bucket?: string;
+  region?: string;
+  checkedAt?: string;
+  steps: StorageDiagnosticStep[];
+  summary: { ok: boolean; failed: number; label: string };
+}
+
 export const api = {
   login: (email: string, password: string) =>
     request<{ authenticated: boolean; email: string }>("/api/admin/login", {
@@ -508,6 +552,7 @@ export const api = {
     model?: string;
     models?: AiModelEntry[];
     defaultModel?: string;
+    publicModelSelector?: boolean;
     topP?: number | null;
     provider?: string;
     apiUrl?: string;
@@ -549,6 +594,26 @@ export const api = {
     request<{ enabled: boolean; updatedAt: string | null }>("/api/admin/maintenance", {
       method: "POST",
       body: JSON.stringify({ enabled }),
+    }),
+
+  adminAccount: () => request<AdminAccountInfo>("/api/admin/account"),
+
+  changeAdminAccount: (payload: {
+    currentPassword: string;
+    email?: string;
+    confirmEmail?: string;
+    password?: string;
+    confirmPassword?: string;
+  }) =>
+    request<AdminAccountChangeResult>("/api/admin/account", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  storageDiagnostic: () =>
+    request<StorageDiagnosticResult>("/api/admin/storage/diagnostic", {
+      method: "POST",
+      body: JSON.stringify({}),
     }),
 
   security: () => request<SecurityInfo>("/api/admin/security"),

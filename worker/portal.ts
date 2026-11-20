@@ -1,4 +1,4 @@
-import { parseCookies, SESSION_COOKIE, sha256Hex } from "./auth";
+import { parseCookies, readAdminCredentials, SESSION_COOKIE, sha256Hex } from "./auth";
 import { deleteObject, putObject, readObject, readObjectBytes } from "./storage";
 import {
   AI_DEFAULT_API_URL,
@@ -226,6 +226,11 @@ interface AiModelTest {
 interface AiModelEntry {
   id: string;
   label: string;
+  /** Enabled models may be offered to public visitors when verified. */
+  enabled: boolean;
+  /** Optional per-model provider label and endpoint (defaults to the global one). */
+  provider: string | null;
+  endpoint: string | null;
   verifiedAt: string | null;
   lastTest: AiModelTest | null;
 }
@@ -238,6 +243,8 @@ interface AiSettings {
   models: AiModelEntry[];
   /** Preferred model when the dashboard is reset. */
   defaultModel: string;
+  /** Whether visitors see a model selector in the assistant. */
+  publicModelSelector: boolean;
   /** Sent as top_p only when the administrator sets it (null = provider default). */
   topP: number | null;
   /** Chat presentation and behavior (public, editable in the dashboard). */
@@ -289,12 +296,16 @@ function readModels(value: unknown, activeModel: string): AiModelEntry[] {
     const id = typeof record.id === "string" ? record.id.trim().slice(0, 120) : "";
     if (!MODEL_ID_RE.test(id)) continue;
     if (entries.some((entry) => entry.id === id)) continue;
+    const endpoint = typeof record.endpoint === "string" ? record.endpoint.trim().slice(0, 300) : "";
     entries.push({
       id,
       label:
         typeof record.label === "string" && record.label.trim()
           ? record.label.trim().slice(0, 60)
           : id.split("/").pop() ?? id,
+      enabled: record.enabled !== false,
+      provider: typeof record.provider === "string" && record.provider.trim() ? record.provider.trim().slice(0, 40) : null,
+      endpoint: endpoint && validAiEndpoint(endpoint) ? endpoint : null,
       verifiedAt: typeof record.verifiedAt === "string" ? record.verifiedAt : null,
       lastTest: readModelTest(record.lastTest),
     });
@@ -305,6 +316,9 @@ function readModels(value: unknown, activeModel: string): AiModelEntry[] {
     entries.push({
       id: activeModel,
       label: activeModel.split("/").pop() ?? activeModel,
+      enabled: true,
+      provider: null,
+      endpoint: null,
       verifiedAt: null,
       lastTest: null,
     });
@@ -335,6 +349,7 @@ async function readAiSettings(env: PortalEnv): Promise<AiSettings> {
     model,
     models: readModels(parsed.models, model || defaultModel),
     defaultModel,
+    publicModelSelector: parsed.publicModelSelector !== false,
     topP:
       parsed.topP === null || parsed.topP === undefined
         ? null
@@ -407,6 +422,7 @@ async function writeAiSettings(env: PortalEnv, settings: AiSettings): Promise<vo
     provider: settings.provider,
     models: settings.models,
     defaultModel: settings.defaultModel,
+    publicModelSelector: settings.publicModelSelector,
     topP: settings.topP,
     apiUrl: settings.apiUrl,
     apiKey: settings.apiKey,
@@ -440,6 +456,7 @@ function describeAi(env: PortalEnv, settings: AiSettings) {
       provider: settings.provider || AI_DEFAULT_PROVIDER,
       models: settings.models,
       defaultModel: settings.defaultModel,
+      publicModelSelector: settings.publicModelSelector,
       topP: settings.topP,
       apiUrl: aiApiUrl(env, settings),
       knowledge: settings.knowledge,
@@ -900,14 +917,30 @@ interface AiHistoryMessage {
   attachments: { name: string; type: string; key: string; size: number }[];
 }
 
+/**
+ * Models a visitor may pick. A model must be enabled by the administrator and
+ * either verified with a real provider round-trip or currently the active
+ * default, so the selector never advertises a model that has not answered.
+ */
+function visitorModels(env: PortalEnv, settings: AiSettings): { id: string; label: string }[] {
+  const active = aiModel(env, settings);
+  return settings.models
+    .filter((entry) => entry.enabled && (Boolean(entry.verifiedAt) || entry.id === active))
+    .map((entry) => ({ id: entry.id, label: entry.label }));
+}
+
 async function aiStatus(env: PortalEnv): Promise<Response> {
   const settings = await readAiSettings(env);
   const model = aiModel(env, settings);
+  const models = visitorModels(env, settings);
   return json({
     enabled: settings.enabled,
     configured: Boolean(aiApiKey(env, settings)),
     provider: settings.provider || AI_DEFAULT_PROVIDER,
     model,
+    defaultModel: models.some((entry) => entry.id === model) ? model : models[0]?.id ?? model,
+    models,
+    publicModelSelector: settings.publicModelSelector && models.length > 1,
     vision: modelSupportsVision(model),
     assistantName: settings.assistantName,
     welcomeMessage: settings.welcomeMessage,
@@ -1038,10 +1071,11 @@ async function generateReply(
   settings: AiSettings,
   history: AiHistoryMessage[],
   userText: string,
-  images: { type: string; base64: string }[]
+  images: { type: string; base64: string }[],
+  selection?: { model: string; endpoint: string }
 ): Promise<string> {
-  const apiUrl = aiApiUrl(env, settings);
-  const model = aiModel(env, settings);
+  const apiUrl = selection?.endpoint || aiApiUrl(env, settings);
+  const model = selection?.model || aiModel(env, settings);
   const apiKey = aiApiKey(env, settings);
   const extraKnowledge = settings.knowledge.trim();
 
@@ -1049,7 +1083,7 @@ async function generateReply(
     {
       role: "system",
       content:
-        `Your name is ${settings.assistantName}. ${AI_GUARDRAILS}\n\nPORTFOLIO KNOWLEDGE (the only facts you may rely on):\n${PORTFOLIO_KNOWLEDGE}` +
+        `Your name is ${settings.assistantName}. ${AI_GUARDRAILS}\n\nPORTFOLIO KNOWLEDGE (authoritative facts about GurSimar Singh):\n${PORTFOLIO_KNOWLEDGE}` +
         (extraKnowledge
           ? `\n\nADDITIONAL KNOWLEDGE (maintained by GurSimar in the dashboard; treat as facts):\n${extraKnowledge}`
           : ""),
@@ -1178,6 +1212,7 @@ async function aiChat(request: Request, env: PortalEnv): Promise<Response> {
   const contentType = request.headers.get("Content-Type") ?? "";
   let message = "";
   let threadId = "";
+  let requestedModel = "";
   let form: FormData | null = null;
 
   if (contentType.includes("multipart/form-data")) {
@@ -1188,14 +1223,29 @@ async function aiChat(request: Request, env: PortalEnv): Promise<Response> {
     }
     message = str(form.get("message"), 4000);
     threadId = str(form.get("threadId"), 64);
+    requestedModel = str(form.get("model"), 120);
   } else {
-    const body = await readJson<{ message?: unknown; threadId?: unknown }>(request);
+    const body = await readJson<{ message?: unknown; threadId?: unknown; model?: unknown }>(request);
     message = cleanText(body?.message, 4000);
     threadId = cleanText(body?.threadId, 64);
+    requestedModel = cleanText(body?.model, 120);
   }
 
   if (!message) return fail("Message cannot be empty.");
   if (threadId && !/^[A-Za-z0-9-]{8,64}$/.test(threadId)) return fail("Invalid conversation id.");
+
+  /* A visitor may only select a model the administrator enabled and that is
+     visible on the public selector. The backend, not the browser, decides what
+     is allowed, and the same server-side API key is used for every model. */
+  const models = visitorModels(env, settings);
+  let selection: { model: string; endpoint: string } | undefined;
+  if (requestedModel) {
+    const entry = settings.models.find((candidate) => candidate.id === requestedModel);
+    if (!entry || !entry.enabled || !models.some((candidate) => candidate.id === entry.id)) {
+      return fail("That model is not available for this assistant. Pick another model and try again.", 400);
+    }
+    selection = { model: entry.id, endpoint: entry.endpoint || aiApiUrl(env, settings) };
+  }
 
   const ts = nowIso();
   if (!threadId) threadId = crypto.randomUUID();
@@ -1275,7 +1325,7 @@ async function aiChat(request: Request, env: PortalEnv): Promise<Response> {
       documents.map((doc) => `--- ${doc.name} ---\n${doc.text}`).join("\n\n")
     : "";
 
-  const model = aiModel(env, settings);
+  const model = selection?.model || aiModel(env, settings);
   const vision = modelSupportsVision(model);
   const limitations: string[] = [];
   if (images.length > 0 && !vision) {
@@ -1300,7 +1350,7 @@ async function aiChat(request: Request, env: PortalEnv): Promise<Response> {
 
   let reply: string;
   try {
-    reply = await generateReply(env, settings, history, contextNote, images);
+    reply = await generateReply(env, settings, history, contextNote, images, selection);
     await writeAiSettings(env, { ...settings, lastSuccessAt: nowIso(), lastError: null }).catch(() => undefined);
   } catch (error) {
     const detail =
@@ -1309,20 +1359,27 @@ async function aiChat(request: Request, env: PortalEnv): Promise<Response> {
         : error instanceof Error
           ? error.message
           : "unknown";
+    const logged = `[${model}] ${detail}`.slice(0, 400);
     await writeAiSettings(env, {
       ...settings,
-      lastError: detail.slice(0, 400),
+      lastError: logged,
       failedRequests: settings.failedRequests + 1,
-      errors: [{ at: nowIso(), message: detail.slice(0, 400) }, ...settings.errors].slice(0, 15),
+      errors: [{ at: nowIso(), message: logged }, ...settings.errors].slice(0, 15),
     }).catch(() => undefined);
-    console.error("AI request failed", detail);
+    console.error("AI request failed", logged);
     if (error instanceof AiProviderError) {
       const failure = classifyFailure(error.status || 503, error.detail, null);
       // Provider payloads never reach the browser; only a category-safe message.
       const headers: HeadersInit =
         failure.retryAfterMs !== null ? { "Retry-After": String(Math.ceil(failure.retryAfterMs / 1000)) } : {};
       return json(
-        { error: failure.publicMessage, category: failure.category, retryable: failure.retryable },
+        {
+          error: failure.publicMessage,
+          category: failure.category,
+          retryable: failure.retryable,
+          model,
+          status: error.status,
+        },
         failure.category === "rate_limit" || failure.category === "quota" || failure.category === "credits"
           ? 429
           : 503,
@@ -1351,6 +1408,7 @@ async function aiChat(request: Request, env: PortalEnv): Promise<Response> {
   return json({
     threadId,
     reply,
+    model,
     attachments: attachmentRows.map((file) => ({ name: file.name, type: file.type, size: file.size })),
   });
 }
@@ -1734,6 +1792,7 @@ async function adminAiSettings(request: Request, env: PortalEnv): Promise<Respon
     model?: unknown;
     models?: unknown;
     defaultModel?: unknown;
+    publicModelSelector?: unknown;
     topP?: unknown;
     provider?: unknown;
     apiUrl?: unknown;
@@ -1784,10 +1843,23 @@ async function adminAiSettings(request: Request, env: PortalEnv): Promise<Respon
     return fail("Default model id is not valid.");
   }
 
+  if (Array.isArray(body.models)) {
+    for (const item of body.models) {
+      const record = item && typeof item === "object" ? (item as Record<string, unknown>) : null;
+      if (!record) continue;
+      const endpoint = typeof record.endpoint === "string" ? record.endpoint.trim() : "";
+      if (endpoint && !validAiEndpoint(endpoint)) {
+        return fail("Every per-model endpoint must be a valid https:// URL (http:// is only accepted for localhost).");
+      }
+    }
+  }
   let models = body.models !== undefined ? readModels(body.models, requestedModel) : current.models;
   for (const id of [requestedModel, requestedDefault]) {
     if (id && !models.some((entry) => entry.id === id)) {
-      models = [...models, { id, label: id.split("/").pop() ?? id, verifiedAt: null, lastTest: null }];
+      models = [
+        ...models,
+        { id, label: id.split("/").pop() ?? id, enabled: true, provider: null, endpoint: null, verifiedAt: null, lastTest: null },
+      ];
     }
   }
   if (models.length > 30) models = models.slice(0, 30);
@@ -1797,6 +1869,8 @@ async function adminAiSettings(request: Request, env: PortalEnv): Promise<Respon
     model: requestedModel,
     models,
     defaultModel: requestedDefault || AI_DEFAULT_MODEL,
+    publicModelSelector:
+      typeof body.publicModelSelector === "boolean" ? body.publicModelSelector : current.publicModelSelector,
     topP:
       body.topP === null
         ? null
@@ -2127,9 +2201,14 @@ async function adminSecurity(request: Request, env: PortalEnv): Promise<Response
       .bind(nowIso())
       .all<{ created_at: string; expires_at: string }>();
     const securityAi = await readAiSettings(env);
+    const credentials = await readAdminCredentials(env);
 
     return json({
-      administrator: { email: env.ADMIN_EMAIL ?? null, configured: Boolean(env.ADMIN_EMAIL && env.ADMIN_PASSWORD_HASH) },
+      administrator: {
+        email: credentials.email || null,
+        configured: Boolean(credentials.email && credentials.passwordHash),
+        source: credentials.source,
+      },
       sessions: {
         active: sessions.results?.length ?? 0,
         recent: (sessions.results ?? []).map((row) => ({ createdAt: row.created_at, expiresAt: row.expires_at })),

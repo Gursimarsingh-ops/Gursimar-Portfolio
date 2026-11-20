@@ -29,6 +29,8 @@ import { MediaManager } from "./MediaManager";
 import { VideoLinkManager } from "./VideoLinkManager";
 import { ArtistPhotoManager } from "./ArtistPhotoManager";
 import { AiConfigPanel } from "./AiConfigPanel";
+import { AdminAccountPanel } from "./AdminAccountPanel";
+import { StorageDiagnostics } from "./StorageDiagnostics";
 import { isVaultMuted, playAccessResult, playVaultUnlock, setVaultMuted } from "./vaultSound";
 
 /** The existing, separately built portfolio admin console. */
@@ -38,6 +40,7 @@ const SECTIONS = [
   { id: "vault-section", label: "Vault" },
   { id: "artist-section", label: "Artist" },
   { id: "ai-section", label: "AI assistant" },
+  { id: "account-section", label: "Admin account" },
   { id: "media-section", label: "Media" },
   { id: "video-links-section", label: "Video links" },
   { id: "health-section", label: "System health" },
@@ -747,6 +750,27 @@ export function SecurityDashboard() {
           )}
         </div>
 
+        {/* --------------------------- admin account --------------------------- */}
+        <div id="account-section" className="mt-10 scroll-mt-24">
+          <SectionHeading
+            eyebrow="Security settings"
+            title="Admin account"
+            description="Change the email and password used to sign in. Credentials are stored hashed in D1 and apply to the next sign-in immediately."
+          />
+
+          {authenticated ? (
+            <AdminAccountPanel />
+          ) : (
+            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 text-[11px] leading-relaxed text-white/40">
+              <span className="flex items-center gap-2 text-white/60">
+                <Lock className="h-3.5 w-3.5" />
+                Locked
+              </span>
+              <p className="mt-2">Sign in to change the administrator email or password.</p>
+            </div>
+          )}
+        </div>
+
         {/* ------------------------------- media ------------------------------- */}
         <div id="media-section" className="mt-10 scroll-mt-24">
           <SectionHeading
@@ -809,6 +833,7 @@ export function SecurityDashboard() {
             lastSuccessAt={lastHealthyAt}
             onRefresh={() => void loadDiagnostics()}
           />
+          {authenticated && <StorageDiagnostics />}
         </div>
 
         {/* ----------------------------- operations ----------------------------- */}

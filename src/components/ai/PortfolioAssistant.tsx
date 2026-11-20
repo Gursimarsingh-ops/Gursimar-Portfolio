@@ -39,6 +39,7 @@ interface Stored {
 }
 
 const STORAGE_KEY = "gs-ai-assistant-v1";
+const MODEL_KEY = "gs-ai-model-v1";
 const CLOSE_MS = 200;
 
 const SUGGESTIONS = [
@@ -76,6 +77,13 @@ export function PortfolioAssistant({ onHire }: { onHire: () => void }) {
   const [threadId, setThreadId] = useState(initial.threadId);
   const [messages, setMessages] = useState<Bubble[]>(initial.messages);
   const [status, setStatus] = useState<AiStatus | null>(null);
+  const [selectedModel, setSelectedModel] = useState<string>(() => {
+    try {
+      return localStorage.getItem(MODEL_KEY) ?? "";
+    } catch {
+      return "";
+    }
+  });
   const [draft, setDraft] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [previews, setPreviews] = useState<Record<string, string>>({});
@@ -90,7 +98,15 @@ export function PortfolioAssistant({ onHire }: { onHire: () => void }) {
 
   useEffect(() => {
     getAiStatus()
-      .then(setStatus)
+      .then((next) => {
+        setStatus(next);
+        // Keep a previously chosen model only if the administrator still offers it.
+        setSelectedModel((current) => {
+          const offered = next.models ?? [];
+          if (current && offered.some((entry) => entry.id === current)) return current;
+          return next.defaultModel || next.model || offered[0]?.id || "";
+        });
+      })
       .catch(() => setStatus(null));
   }, []);
 
@@ -253,7 +269,9 @@ export function PortfolioAssistant({ onHire }: { onHire: () => void }) {
     setProgress(0);
 
     try {
-      const result = await askAssistant(threadId, message, files, (percent) => setProgress(percent));
+      const result = await askAssistant(threadId, message, files, selectedModel || null, (percent) =>
+        setProgress(percent)
+      );
       setThreadId(result.threadId);
       setMessages((current) => [
         ...current,
@@ -272,9 +290,23 @@ export function PortfolioAssistant({ onHire }: { onHire: () => void }) {
     }
   };
 
+  const modelOptions = status?.models ?? [];
+  const selectorVisible = Boolean(available && status?.publicModelSelector && modelOptions.length > 1);
+  const activeModelLabel =
+    modelOptions.find((entry) => entry.id === selectedModel)?.label || selectedModel || status?.model || "default";
+
+  // Persist the choice so it survives reloads; history is untouched by a switch.
+  useEffect(() => {
+    try {
+      if (selectedModel) localStorage.setItem(MODEL_KEY, selectedModel);
+    } catch {
+      /* storage unavailable */
+    }
+  }, [selectedModel]);
+
   const statusLabel = status
     ? available
-      ? `Ready · ${status.model}`
+      ? `Ready · ${activeModelLabel}`
       : status.enabled
         ? "Backend not configured"
         : "Paused by administrator"
@@ -399,7 +431,8 @@ export function PortfolioAssistant({ onHire }: { onHire: () => void }) {
                 <div className="rounded-2xl border border-white/12 bg-white/[0.04] p-4">
                   <p className="text-[12.5px] leading-relaxed text-white/90">{welcome}</p>
                   <p className="mt-2 text-[10px] leading-relaxed text-white/55">
-                    I answer from the published portfolio and point to the Hire Me form or direct chat for anything private.
+                    Ask me anything — general questions, explanations, writing help — or about GurSimar's work, services
+                    and how to start a project. Use the Hire Me form or direct chat for anything private.
                   </p>
                   <div className="mt-3 flex flex-wrap gap-1.5">
                     {SUGGESTIONS.map((suggestion) => (
@@ -550,6 +583,28 @@ export function PortfolioAssistant({ onHire }: { onHire: () => void }) {
                   </li>
                 ))}
               </ul>
+            )}
+
+            {selectorVisible && (
+              <div className="relative mx-3 mb-2 flex items-center gap-2 rounded-xl border border-white/12 bg-white/[0.03] px-2.5 py-1.5">
+                <span className="text-[8px] uppercase tracking-[0.16em] text-white/40">Model</span>
+                <select
+                  value={selectedModel}
+                  onChange={(event) => setSelectedModel(event.target.value)}
+                  disabled={busy}
+                  aria-label="Choose AI model"
+                  className="min-w-0 flex-1 cursor-pointer rounded-md bg-transparent text-[11px] text-white outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {modelOptions.map((entry) => (
+                    <option key={entry.id} value={entry.id} className="bg-neutral-900 text-white">
+                      {entry.label}
+                    </option>
+                  ))}
+                </select>
+                <span className="shrink-0 text-[8px] uppercase tracking-[0.14em] text-white/30">
+                  {busy ? "In use" : "Next message"}
+                </span>
+              </div>
             )}
 
             <form
